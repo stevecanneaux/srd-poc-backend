@@ -1,9 +1,14 @@
 {
-"name": "srd-poc-backend",
-"version": "1.0.0",
-"type": "module",
-"dependencies": {
-"hono": "^4.4.7" ,
-"zod": "^3.23.8"
-}
+  "name": "srd-poc-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "echo \"no build\"",
+    "start": "echo \"serverless via vercel\""
+  },
+  "dependencies": {
+    "hono": "^4.4.7",
+    "zod": "^3.23.8"
+  }
 }
