@@ -1,77 +1,77 @@
-import { Hono } from 'hono';
-const vehicleEtaToPickup = new Date(now.getTime() + pickupMins*60000);
-
-
-// last-hour rule
-const shiftEnd = new Date(v.shiftEnd);
-const minutesLeft = (shiftEnd.getTime() - now.getTime())/60000;
-if (minutesLeft <= (policies.noNewJobLastMinutes||60) && !v.allowOvertime) continue;
-
-
-// check dropoff feasibility (use job.dropoffPlaceId)
-// resolve dropoff coords (not needed for ETA mock) and hours
-const hours = await getPlaceHours(job.dropoffPlaceId, now);
-const { openAt, cutoffAt } = cutoffDateTimeFor(now, hours.open, hours.close, hours.cutoffMins);
-// assume pickup 10 mins, then drive pickup->dropoff with fake 20 mins
-const pickupToDropoffMins = Math.max(10, await getEtaMinutes(job.pickup, v.location));
-const arrivalAtDrop = new Date(vehicleEtaToPickup.getTime() + (10 + pickupToDropoffMins)*60000);
-
-
-const willMissCutoff = arrivalAtDrop > cutoffAt;
-const willExceedShift = arrivalAtDrop > new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes||0)*60000);
-if (willMissCutoff && job.dropoffFallbackPlaceIds?.length){
-// try first fallback quickly (MVP)
-const fbHours = await getPlaceHours(job.dropoffFallbackPlaceIds[0], now);
-const { cutoffAt: fbCutoff } = cutoffDateTimeFor(now, fbHours.open, fbHours.close, fbHours.cutoffMins);
-const fbArrival = arrivalAtDrop; // same ETA assumption for MVP
-if (fbArrival <= fbCutoff){
-best = { jobId: job.id, vehicleId: v.id, dropoffPlaceId: job.dropoffFallbackPlaceIds[0],
-pickupEtaMinutes: pickupMins, dropoffEtaMinutes: (10 + pickupToDropoffMins),
-willMissCutoff: false, willExceedShift,
-reason: `Fallback drop-off chosen to meet intake cut-off. ETA ${Math.round((fbArrival.getTime()-now.getTime())/60000)} mins.` };
-break;
-}
-}
-if (!willMissCutoff){
-const candidate = { jobId: job.id, vehicleId: v.id, dropoffPlaceId: job.dropoffPlaceId,
-pickupEtaMinutes: pickupMins, dropoffEtaMinutes: (10 + pickupToDropoffMins),
-willMissCutoff, willExceedShift,
-reason: `Within shift window; intake before cut-off.` };
-if (!best || candidate.pickupEtaMinutes < best.pickupEtaMinutes) best = candidate;
-}
-}
-if (best) assignments.push(best); else unassigned.push(job.id);
-}
-return { assignments, unassigned, notes: 'v1-greedy' };
+function parseJSON(req: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    try {
+      if (req.body && typeof req.body === 'object') return resolve(req.body);
+      let data = '';
+      req.on('data', (c: any) => (data += c));
+      req.on('end', () => {
+        try { resolve(data ? JSON.parse(data) : {}); }
+        catch (e) { reject(e); }
+      });
+    } catch (e) { reject(e); }
+  });
 }
 
+export default async function handler(req: any, res: any) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-app.post('/optimize', async (c) => {
-const body = await c.req.json();
-const parsed = OptimizeRequest.safeParse(body);
-if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-const { now, jobs, vehicles, policies } = parsed.data;
-const res = await plan(new Date(now), jobs, vehicles, policies||{});
-return c.json(res);
-});
+  try {
+    const body = await parseJSON(req);
+    const now = new Date(body?.now || new Date().toISOString());
+    const jobs = body?.jobs ?? [];
+    const vehicles = body?.vehicles ?? [];
+    const policies = body?.policies ?? { noNewJobLastMinutes: 60, maxOvertimeMinutes: 0 };
 
+    // Minimal greedy assignment (demo only)
+    const assignments: any[] = [];
+    const unassigned: string[] = [];
 
-app.post('/eta/matrix', async (c) => {
-const { origins, destinations } = await c.req.json();
-// TODO: call real distance matrix; here we just return symmetric fake values
-const minutes = origins.map((o:any)=>destinations.map((d:any)=>Math.round(Math.random()*25)+5));
-return c.json({ minutes });
-});
+    for (const job of jobs) {
+      let best: any = null;
 
+      for (const v of vehicles) {
+        // last-hour rule
+        const shiftEnd = new Date(v.shiftEnd || now);
+        const minutesLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
+        const allowOvertime = !!v.allowOvertime;
 
-app.post('/places/hours', async (c) => {
-const { placeIds } = await c.req.json();
-const hours = (placeIds||[]).map((p:string)=>({ placeId: p, openingHours: [{day:1,open:'09:00',close:'17:00'}], intakeCutoffMinutesBeforeClose: 30 }));
-return c.json({ hours });
-});
+        if (minutesLeft <= (policies.noNewJobLastMinutes ?? 60) && !allowOvertime) {
+          continue;
+        }
 
+        // Fake ETAs just for PoC testing (replace later with real matrix)
+        const pickupEtaMinutes = 8;
+        const dropoffEtaMinutes = 22;
 
-app.get('/health', (c)=> c.text('ok'));
+        // Intake cutoff (assume 30 min before 17:00 for demo)
+        const close = new Date(now); close.setHours(17, 0, 0, 0);
+        const cutoff = new Date(close.getTime() - 30 * 60000);
+        const arrivalAtDrop = new Date(now.getTime() + (pickupEtaMinutes + dropoffEtaMinutes + 10) * 60000);
 
+        const willMissCutoff = arrivalAtDrop > cutoff;
+        const willExceedShift = arrivalAtDrop > new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
+        if (willMissCutoff) continue;
 
-export default app;
+        const candidate = {
+          jobId: job.id,
+          vehicleId: v.id,
+          dropoffPlaceId: job.dropoffPlaceId,
+          pickupEtaMinutes,
+          dropoffEtaMinutes,
+          willMissCutoff,
+          willExceedShift,
+          reason: `Within shift and intake window. ETA ~${pickupEtaMinutes + dropoffEtaMinutes} mins.`
+        };
+
+        if (!best) best = candidate;
+      }
+
+      if (best) assignments.push(best); else unassigned.push(job.id);
+    }
+
+    return res.status(200).json({ assignments, unassigned, notes: 'v0-plain-handler' });
+  } catch (err: any) {
+    console.error('optimize error', err);
+    return res.status(500).json({ error: 'Internal error', detail: String(err?.message || err) });
+  }
+}
