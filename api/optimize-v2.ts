@@ -7,7 +7,7 @@ type Vehicle = {
   id: string;
   type: VehicleType;
   location: Coord;
-  shiftEnd: string;
+  shiftEnd: string; // ISO
   capabilities?: string[];
   allowOvertime?: boolean;
 };
@@ -29,15 +29,16 @@ type Garage = {
   name?: string;
   coords?: Coord;
   openingHours?: Weekly[];
+  intakeCutoffMinutesBeforeClose?: number;
 };
 
 type PoliciesV2 = {
-  maxLegMiles?: number;
-  noNewJobLastMinutes?: number;
-  maxOvertimeMinutes?: number;
-  serviceMinutes?: number;
-  intakeCutoffMinutesBeforeClose?: number;
-  enableMeetAndSwap?: boolean;
+  maxLegMiles?: number;                  // default 30
+  noNewJobLastMinutes?: number;          // default 60
+  maxOvertimeMinutes?: number;           // default 0
+  serviceMinutes?: number;               // default 10
+  intakeCutoffMinutesBeforeClose?: number; // default 30
+  enableMeetAndSwap?: boolean;           // default true
 };
 
 type RouteLeg = {
@@ -64,17 +65,29 @@ function hhmmToDate(base: Date, hhmm: string) {
   return d;
 }
 function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
-  const dow = date.getDay();
+  const dow = date.getDay(); // 0..6
   const today = hours?.find(h => h.day === dow);
-  if (!today) return new Date(date.getTime() - 1);
+  if (!today) return new Date(date.getTime() - 1); // closed
   const closeAt = hhmmToDate(date, today.close);
   return new Date(closeAt.getTime() - cutoffMins*60000);
 }
 
-// Updated matrix helper — forwards Bearer token from the incoming request
-async function matrix(origins: Coord[], destinations: Coord[], authHeader?: string) {
-  const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+/** Build the correct absolute origin for self-calls. */
+function resolveOrigin(req: any) {
+  // Prefer Vercel deployment URL (no protocol in env var)
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  // Fallback to the Host header
+  const host = req?.headers?.host;
+  if (host) return `https://${host}`;
+  // Last resort: assume production hostname (edit if needed)
+  return 'https://srd-poc-backend.vercel.app';
+}
+
+/** Call internal matrix with forwarded Authorization (if present). */
+async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
+  const base = resolveOrigin(req);
   const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const authHeader = req.headers?.authorization;
   if (authHeader) headers['authorization'] = authHeader;
 
   const r = await fetch(`${base}/api/eta/matrix`, {
@@ -83,16 +96,29 @@ async function matrix(origins: Coord[], destinations: Coord[], authHeader?: stri
     body: JSON.stringify({ origins, destinations })
   });
 
-  if (!r.ok) throw new Error(`matrix ${r.status}`);
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '');
+    throw new Error(`matrix ${r.status}${detail ? `: ${detail}` : ''}`);
+  }
   const data = await r.json();
-  return { minutes: data.minutes as number[][], miles: data.miles as number[][] };
+  const minutes: number[][] = data.minutes || [];
+  const miles: number[][] = data.miles || [];
+  return { minutes, miles };
 }
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    const authHeader = req.headers?.authorization || '';
+    // If you require Bearer here, ensure your GPT Action uses the same token
+    // and you have API_TOKEN set in Vercel. Example guard (optional):
+    // const configured = process.env.API_TOKEN;
+    // if (configured) {
+    //   const auth = req.headers?.authorization || "";
+    //   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    //   if (token !== configured) return res.status(401).json({ error: "Unauthorized" });
+    // }
+
     const body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
     const now = new Date(body?.now || new Date().toISOString());
     const jobs: JobV2[] = body?.jobs ?? [];
@@ -115,25 +141,33 @@ export default async function handler(req: any, res: any) {
     const unassigned: string[] = [];
 
     for (const job of jobs) {
-      // Choose drop site per garage cutoff; else home
+      // Decide drop site per cutoff rule
       let drop: Coord | null = null;
       let dropDecision: "preferred"|"secondary"|"home_fallback" = "home_fallback";
       const preferred = job.preferredDropPlaceId ? garageMap[job.preferredDropPlaceId] : undefined;
       const secondary = job.secondaryDropPlaceId ? garageMap[job.secondaryDropPlaceId] : undefined;
 
       if (preferred?.coords) {
-        const cutoff = todaysCutoff(now, preferred.openingHours, policies.intakeCutoffMinutesBeforeClose);
+        const cutoff = todaysCutoff(
+          now,
+          preferred.openingHours,
+          preferred.intakeCutoffMinutesBeforeClose ?? policies.intakeCutoffMinutesBeforeClose ?? 30
+        );
         if (now <= cutoff) { drop = preferred.coords; dropDecision = "preferred"; }
       }
       if (!drop && secondary?.coords) {
-        const cutoff = todaysCutoff(now, secondary.openingHours, policies.intakeCutoffMinutesBeforeClose);
+        const cutoff = todaysCutoff(
+          now,
+          secondary.openingHours,
+          secondary.intakeCutoffMinutesBeforeClose ?? policies.intakeCutoffMinutesBeforeClose ?? 30
+        );
         if (now <= cutoff) { drop = secondary.coords; dropDecision = "secondary"; }
       }
       if (!drop) { drop = job.homeFallback; dropDecision = "home_fallback"; }
 
       const needsRecovery = job.issueType !== "repair";
       const eligible = vehicles.filter(v => {
-        if (!needsRecovery) return true;
+        if (!needsRecovery) return true; // repair can be vans/moto_repair etc.
         return ["van_tow","small_ramp","hiab_grabber","lorry_recovery"].includes(v.type);
       });
 
@@ -145,34 +179,38 @@ export default async function handler(req: any, res: any) {
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
         if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
 
-        // Leg 1: v -> pickup
-        const m1 = await matrix([v.location], [job.pickup], authHeader);
+        // Leg 1: vehicle -> pickup
+        const m1 = await matrix(req, [v.location], [job.pickup]);
         const leg1Min = m1.minutes[0][0];
         const leg1Miles = m1.miles[0][0];
-        if (leg1Miles > (policies.maxLegMiles ?? 30)) continue;
+        if (leg1Miles > (policies.maxLegMiles ?? 30)) continue; // too far to reach pickup
 
         // Leg 2: pickup -> drop
-        const m2 = await matrix([job.pickup], [drop!], authHeader);
+        const m2 = await matrix(req, [job.pickup], [drop!]);
         const leg2Min = m2.minutes[0][0];
         const leg2Miles = m2.miles[0][0];
 
         let legs: RouteLeg[] = [];
         let totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
-        let willExceedShift = new Date(now.getTime() + totalMin*60000) > new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
+        let willExceedShift =
+          new Date(now.getTime() + totalMin*60000) >
+          new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
 
         if (leg2Miles <= (policies.maxLegMiles ?? 30)) {
+          // Direct plan
           legs = [
             { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
             { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" }
           ];
         } else if (policies.enableMeetAndSwap) {
+          // Meet-and-swap midpoint heuristic
           const mid: Coord = { lat: (job.pickup.lat + drop!.lat)/2, lng: (job.pickup.lng + drop!.lng)/2 };
 
-          // second vehicle to midpoint
+          // Second vehicle to midpoint
           let best2: { veh: Vehicle, toMidMin: number, toMidMiles: number } | null = null;
           for (const v2 of eligible) {
             if (v2.id === v.id) continue;
-            const mA = await matrix([v2.location], [mid], authHeader);
+            const mA = await matrix(req, [v2.location], [mid]);
             const toMidMin = mA.minutes[0][0];
             const toMidMiles = mA.miles[0][0];
             if (toMidMiles <= (policies.maxLegMiles ?? 30)) {
@@ -181,10 +219,10 @@ export default async function handler(req: any, res: any) {
           }
           if (best2) {
             const v2 = best2.veh;
-            const mB = await matrix([job.pickup], [mid], authHeader);
+            const mB = await matrix(req, [job.pickup], [mid]);
             const p2midMin = mB.minutes[0][0];
             const p2midMiles = mB.miles[0][0];
-            const mC = await matrix([mid], [drop!], authHeader);
+            const mC = await matrix(req, [mid], [drop!]);
             const mid2dropMin = mC.minutes[0][0];
             const mid2dropMiles = mC.miles[0][0];
 
@@ -193,10 +231,13 @@ export default async function handler(req: any, res: any) {
                 leg1Min + (policies.serviceMinutes ?? 10) + p2midMin +
                 best2.toMidMin + (policies.serviceMinutes ?? 10) + mid2dropMin;
 
-              const exceed1 = new Date(now.getTime() + (leg1Min + (policies.serviceMinutes ?? 10) + p2midMin)*60000)
-                > new Date(new Date(v.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
-              const exceed2 = new Date(now.getTime() + (best2.toMidMin + (policies.serviceMinutes ?? 10) + mid2dropMin)*60000)
-                > new Date(new Date(v2.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
+              const exceed1 =
+                new Date(now.getTime() + (leg1Min + (policies.serviceMinutes ?? 10) + p2midMin)*60000) >
+                new Date(new Date(v.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
+
+              const exceed2 =
+                new Date(now.getTime() + (best2.toMidMin + (policies.serviceMinutes ?? 10) + mid2dropMin)*60000) >
+                new Date(new Date(v2.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0)*60000);
 
               willExceedShift = exceed1 || exceed2;
 
@@ -230,7 +271,10 @@ export default async function handler(req: any, res: any) {
                   : "Direct within per-leg miles limit.")
         };
 
-        if (!best || legs.reduce((a,l)=>a+l.etaMinutes,0) < best.legs.reduce((a,l)=>a+l.etaMinutes,0)) {
+        if (
+          !best ||
+          legs.reduce((a,l)=>a+l.etaMinutes,0) < best.legs.reduce((a,l)=>a+l.etaMinutes,0)
+        ) {
           best = assign;
         }
       }
@@ -238,7 +282,7 @@ export default async function handler(req: any, res: any) {
       if (best) assignments.push(best); else unassigned.push(job.id);
     }
 
-    res.status(200).json({ assignments, unassigned, notes: "optimize-v2 using real miles from Google DM" });
+    res.status(200).json({ assignments, unassigned, notes: "optimize-v2 using real miles (auth forwarded)" });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
     res.status(500).json({ error: "Internal error", detail: String(e?.message || e) });
