@@ -71,12 +71,18 @@ function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
   return new Date(closeAt.getTime() - cutoffMins*60000);
 }
 
-async function matrix(origins: Coord[], destinations: Coord[]) {
+// Updated matrix helper — forwards Bearer token from the incoming request
+async function matrix(origins: Coord[], destinations: Coord[], authHeader?: string) {
   const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (authHeader) headers['authorization'] = authHeader;
+
   const r = await fetch(`${base}/api/eta/matrix`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST',
+    headers,
     body: JSON.stringify({ origins, destinations })
   });
+
   if (!r.ok) throw new Error(`matrix ${r.status}`);
   const data = await r.json();
   return { minutes: data.minutes as number[][], miles: data.miles as number[][] };
@@ -86,6 +92,7 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
+    const authHeader = req.headers?.authorization || '';
     const body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
     const now = new Date(body?.now || new Date().toISOString());
     const jobs: JobV2[] = body?.jobs ?? [];
@@ -139,13 +146,13 @@ export default async function handler(req: any, res: any) {
         if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
 
         // Leg 1: v -> pickup
-        const m1 = await matrix([v.location], [job.pickup]);
+        const m1 = await matrix([v.location], [job.pickup], authHeader);
         const leg1Min = m1.minutes[0][0];
         const leg1Miles = m1.miles[0][0];
         if (leg1Miles > (policies.maxLegMiles ?? 30)) continue;
 
         // Leg 2: pickup -> drop
-        const m2 = await matrix([job.pickup], [drop!]);
+        const m2 = await matrix([job.pickup], [drop!], authHeader);
         const leg2Min = m2.minutes[0][0];
         const leg2Miles = m2.miles[0][0];
 
@@ -165,7 +172,7 @@ export default async function handler(req: any, res: any) {
           let best2: { veh: Vehicle, toMidMin: number, toMidMiles: number } | null = null;
           for (const v2 of eligible) {
             if (v2.id === v.id) continue;
-            const mA = await matrix([v2.location], [mid]);
+            const mA = await matrix([v2.location], [mid], authHeader);
             const toMidMin = mA.minutes[0][0];
             const toMidMiles = mA.miles[0][0];
             if (toMidMiles <= (policies.maxLegMiles ?? 30)) {
@@ -174,10 +181,10 @@ export default async function handler(req: any, res: any) {
           }
           if (best2) {
             const v2 = best2.veh;
-            const mB = await matrix([job.pickup], [mid]);
+            const mB = await matrix([job.pickup], [mid], authHeader);
             const p2midMin = mB.minutes[0][0];
             const p2midMiles = mB.miles[0][0];
-            const mC = await matrix([mid], [drop!]);
+            const mC = await matrix([mid], [drop!], authHeader);
             const mid2dropMin = mC.minutes[0][0];
             const mid2dropMiles = mC.miles[0][0];
 
