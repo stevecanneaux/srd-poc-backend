@@ -2,35 +2,44 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 /**
- * Accepts a new vehicle, merges it with the last job run,
- * and re-runs the optimizer to update the schedule.
+ * Adds a new vehicle, merges it with the most recent plan,
+ * and triggers a fresh optimization run.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
 
-    const body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
-    const { newVehicle, lastRun } = body;
+    const body =
+      typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+    const { newVehicle, lastRun: bodyLastRun } = body;
 
     if (!newVehicle) {
       return res.status(400).json({ error: "newVehicle object required" });
     }
 
-    // 1️⃣ Retrieve or accept the last optimization batch (jobs, vehicles, garages, policies)
-    // In production, store the latest run JSON in Redis or DB for recall.
+    // 🧠 Retrieve the last optimization batch
+    // Prefer body.lastRun if provided, else recall from global cache
+    const cachedRun = (globalThis as any).latestOptimizationRun;
+    const lastRun = bodyLastRun || cachedRun;
+
     if (!lastRun) {
-      return res.status(400).json({ error: "lastRun (jobs, vehicles, garages, policies) required" });
+      return res.status(400).json({
+        error:
+          "No optimization context found. Please run /api/optimize-v2 at least once first.",
+      });
     }
 
-    // 2️⃣ Merge the new vehicle
+    // 🧩 Merge the new vehicle into the list
     const vehicles = [...(lastRun.vehicles || []), newVehicle];
 
-    // 3️⃣ Call /api/optimize-v2 to recompute schedule
+    // 🛰️ Call /api/optimize-v2 to recompute schedule
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
       : `https://${req.headers.host}`;
 
-    const r = await fetch(`${baseUrl}/api/optimize-v2`, {
+    const response = await fetch(`${baseUrl}/api/optimize-v2`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -42,15 +51,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }),
     });
 
-    if (!r.ok) {
-      const text = await r.text();
-      throw new Error(`Optimizer returned ${r.status}: ${text}`);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Optimizer returned ${response.status}: ${text}`);
     }
 
-    const data = await r.json();
+    const newSchedule = await response.json();
+
+    // 🧾 Update the in-memory cache with the new state
+    (globalThis as any).latestOptimizationRun = {
+      timestamp: new Date().toISOString(),
+      jobs: lastRun.jobs,
+      vehicles,
+      garages: lastRun.garages,
+      policies: lastRun.policies,
+    };
+
     return res.status(200).json({
-      message: "New vehicle added and optimizer re-run successfully.",
-      newSchedule: data,
+      message: "✅ New vehicle added and optimizer re-run successfully.",
+      newVehicle,
+      newSchedule,
     });
   } catch (err: any) {
     console.error("add-and-rerun error", err);
