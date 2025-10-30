@@ -65,6 +65,7 @@ type AssignmentV2 = {
   reason: string;
 };
 
+// -------------------- helpers --------------------
 function hhmmToDate(base: Date, hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
   const d = new Date(base);
@@ -106,6 +107,7 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
   return { minutes: data.minutes || [], miles: data.miles || [] };
 }
 
+// -------------------- main handler --------------------
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method Not Allowed" });
@@ -133,16 +135,12 @@ export default async function handler(req: any, res: any) {
     const assignments: AssignmentV2[] = [];
     const unassigned: string[] = [];
 
+    // -------------------- optimization loop --------------------
     for (const job of jobs) {
       let drop: Coord | null = null;
-      let dropDecision: "preferred" | "secondary" | "home_fallback" =
-        "home_fallback";
-      const preferred = job.preferredDropPlaceId
-        ? garageMap[job.preferredDropPlaceId]
-        : undefined;
-      const secondary = job.secondaryDropPlaceId
-        ? garageMap[job.secondaryDropPlaceId]
-        : undefined;
+      let dropDecision: "preferred" | "secondary" | "home_fallback" = "home_fallback";
+      const preferred = job.preferredDropPlaceId ? garageMap[job.preferredDropPlaceId] : undefined;
+      const secondary = job.secondaryDropPlaceId ? garageMap[job.secondaryDropPlaceId] : undefined;
 
       if (preferred?.coords) {
         const cutoff = todaysCutoff(
@@ -178,12 +176,7 @@ export default async function handler(req: any, res: any) {
       const needsRecovery = job.issueType !== "repair";
       const eligible = vehicles.filter((v) => {
         if (!needsRecovery) return true;
-        return [
-          "van_tow",
-          "small_ramp",
-          "hiab_grabber",
-          "lorry_recovery",
-        ].includes(v.type);
+        return ["van_tow", "small_ramp", "hiab_grabber", "lorry_recovery"].includes(v.type);
       });
 
       let best: AssignmentV2 | null = null;
@@ -191,11 +184,7 @@ export default async function handler(req: any, res: any) {
       for (const v of eligible) {
         const shiftEnd = new Date(v.shiftEnd);
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
-        if (
-          minsLeft <= (policies.noNewJobLastMinutes ?? 60) &&
-          !v.allowOvertime
-        )
-          continue;
+        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
 
         const m1 = await matrix(req, [v.location], [job.pickup]);
         const leg1Min = m1.minutes[0][0];
@@ -210,49 +199,23 @@ export default async function handler(req: any, res: any) {
         let totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
         let willExceedShift =
           new Date(now.getTime() + totalMin * 60000) >
-          new Date(
-            shiftEnd.getTime() +
-              (policies.maxOvertimeMinutes ?? 0) * 60000
-          );
+          new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
 
         if (leg2Miles <= (policies.maxLegMiles ?? 30)) {
           legs = [
-            {
-              from: v.location,
-              to: job.pickup,
-              miles: leg1Miles,
-              etaMinutes: leg1Min,
-              vehicleId: v.id,
-              note: "to pickup",
-            },
-            {
-              from: job.pickup,
-              to: drop!,
-              miles: leg2Miles,
-              etaMinutes: leg2Min,
-              vehicleId: v.id,
-              note: "pickup to drop",
-            },
+            { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
+            { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
           ];
         } else if (policies.enableMeetAndSwap) {
-          const mid: Coord = {
-            lat: (job.pickup.lat + drop!.lat) / 2,
-            lng: (job.pickup.lng + drop!.lng) / 2,
-          };
-
-          let best2: {
-            veh: Vehicle;
-            toMidMin: number;
-            toMidMiles: number;
-          } | null = null;
+          const mid: Coord = { lat: (job.pickup.lat + drop!.lat) / 2, lng: (job.pickup.lng + drop!.lng) / 2 };
+          let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null = null;
           for (const v2 of eligible) {
             if (v2.id === v.id) continue;
             const mA = await matrix(req, [v2.location], [mid]);
             const toMidMin = mA.minutes[0][0];
             const toMidMiles = mA.miles[0][0];
             if (toMidMiles <= (policies.maxLegMiles ?? 30)) {
-              if (!best2 || toMidMin < best2.toMidMin)
-                best2 = { veh: v2, toMidMin, toMidMiles };
+              if (!best2 || toMidMin < best2.toMidMin) best2 = { veh: v2, toMidMin, toMidMiles };
             }
           }
           if (best2) {
@@ -264,79 +227,23 @@ export default async function handler(req: any, res: any) {
             const mid2dropMin = mC.minutes[0][0];
             const mid2dropMiles = mC.miles[0][0];
 
-            if (
-              p2midMiles <= (policies.maxLegMiles ?? 30) &&
-              mid2dropMiles <= (policies.maxLegMiles ?? 30)
-            ) {
+            if (p2midMiles <= 30 && mid2dropMiles <= 30) {
               const totalMinSwap =
-                leg1Min +
-                (policies.serviceMinutes ?? 10) +
-                p2midMin +
-                best2.toMidMin +
-                (policies.serviceMinutes ?? 10) +
-                mid2dropMin;
-
+                leg1Min + (policies.serviceMinutes ?? 10) + p2midMin +
+                best2.toMidMin + (policies.serviceMinutes ?? 10) + mid2dropMin;
               const exceed1 =
-                new Date(
-                  now.getTime() +
-                    (leg1Min +
-                      (policies.serviceMinutes ?? 10) +
-                      p2midMin) *
-                      60000
-                ) >
-                new Date(
-                  new Date(v.shiftEnd).getTime() +
-                    (policies.maxOvertimeMinutes ?? 0) * 60000
-                );
-
+                new Date(now.getTime() + (leg1Min + (policies.serviceMinutes ?? 10) + p2midMin) * 60000) >
+                new Date(new Date(v.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
               const exceed2 =
-                new Date(
-                  now.getTime() +
-                    (best2.toMidMin +
-                      (policies.serviceMinutes ?? 10) +
-                      mid2dropMin) *
-                      60000
-                ) >
-                new Date(
-                  new Date(v2.shiftEnd).getTime() +
-                    (policies.maxOvertimeMinutes ?? 0) * 60000
-                );
-
+                new Date(now.getTime() + (best2.toMidMin + (policies.serviceMinutes ?? 10) + mid2dropMin) * 60000) >
+                new Date(new Date(v2.shiftEnd).getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
               willExceedShift = exceed1 || exceed2;
 
               legs = [
-                {
-                  from: v.location,
-                  to: job.pickup,
-                  miles: leg1Miles,
-                  etaMinutes: leg1Min,
-                  vehicleId: v.id,
-                  note: "to pickup",
-                },
-                {
-                  from: job.pickup,
-                  to: mid,
-                  miles: p2midMiles,
-                  etaMinutes: p2midMin,
-                  vehicleId: v.id,
-                  note: "to rendezvous",
-                },
-                {
-                  from: v2.location,
-                  to: mid,
-                  miles: best2.toMidMiles,
-                  etaMinutes: best2.toMidMin,
-                  vehicleId: v2.id,
-                  note: "second vehicle to rendezvous",
-                },
-                {
-                  from: mid,
-                  to: drop!,
-                  miles: mid2dropMiles,
-                  etaMinutes: mid2dropMin,
-                  vehicleId: v2.id,
-                  note: "to drop (swap)",
-                },
+                { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
+                { from: job.pickup, to: mid, miles: p2midMiles, etaMinutes: p2midMin, vehicleId: v.id, note: "to rendezvous" },
+                { from: v2.location, to: mid, miles: best2.toMidMiles, etaMinutes: best2.toMidMin, vehicleId: v2.id, note: "second vehicle to rendezvous" },
+                { from: mid, to: drop!, miles: mid2dropMiles, etaMinutes: mid2dropMin, vehicleId: v2.id, note: "to drop (swap)" },
               ];
               totalMin = totalMinSwap;
             } else continue;
@@ -356,11 +263,7 @@ export default async function handler(req: any, res: any) {
               : "Direct within per-leg miles limit.",
         };
 
-        if (
-          !best ||
-          legs.reduce((a, l) => a + l.etaMinutes, 0) <
-            best.legs.reduce((a, l) => a + l.etaMinutes, 0)
-        )
+        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0))
           best = assign;
       }
 
@@ -368,7 +271,7 @@ export default async function handler(req: any, res: any) {
       else unassigned.push(job.id);
     }
 
-    // ✅ Vehicle request logic
+    // -------------------- vehicle requests --------------------
     const base = resolveOrigin(req);
 
     // A. Unassigned jobs → request additional vehicles
@@ -421,17 +324,23 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    res
-      .status(200)
-      .json({
-        assignments,
-        unassigned,
-        notes: "optimize-v2 using real miles (auth forwarded)",
-      });
+    // -------------------- NEW: persist last optimization --------------------
+    (globalThis as any).latestOptimizationRun = {
+      timestamp: new Date().toISOString(),
+      jobs,
+      vehicles,
+      garages,
+      policies,
+    };
+
+    // -------------------- respond --------------------
+    res.status(200).json({
+      assignments,
+      unassigned,
+      notes: "optimize-v2 using real miles (auth forwarded)",
+    });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
-    res
-      .status(500)
-      .json({ error: "Internal error", detail: String(e?.message || e) });
+    res.status(500).json({ error: "Internal error", detail: String(e?.message || e) });
   }
 }
