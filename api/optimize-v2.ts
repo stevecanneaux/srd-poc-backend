@@ -312,6 +312,69 @@ export default async function handler(req: any, res: any) {
 
     logDebug(`Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`);
 
+    // -------------------- vehicle or meet-swap fallback logic --------------------
+
+    // A. Unassigned jobs → request additional vehicles
+    if (unassigned.length) {
+      const base = resolveOrigin(req);
+
+      for (const jobId of unassigned) {
+        const job = jobs.find((j) => j.id === jobId);
+        if (!job) continue;
+
+        const likelyType =
+          job.issueType === "recovery_only"
+            ? "hiab_grabber"
+            : job.issueType === "repair_possible_recovery"
+            ? "van_tow"
+            : "van_only";
+
+        try {
+          const resp = await fetch(`${base}/api/vehicles/request`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jobId,
+              coords: job.pickup,
+              reason: "No feasible vehicle within 30 mi or shift window — requesting reinforcement",
+              vehicleHint: likelyType,
+              shiftRisk: false,
+            }),
+          });
+
+          logDebug(
+            `[optimize-v2] Vehicle request for ${jobId} → ${resp.status} ${resp.ok ? "✅" : "❌"}`
+          );
+        } catch (err) {
+          console.error("Vehicle request failed for", jobId, err);
+        }
+      }
+    }
+
+    // B. Meet-and-swap routes that exceed shift → request assist vehicle
+    for (const assign of assignments) {
+      if (assign.willExceedShift && assign.legs.length > 2) {
+        const job = jobs.find((j) => j.id === assign.jobId);
+        try {
+          const resp = await fetch(`${resolveOrigin(req)}/api/vehicles/request`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jobId: assign.jobId,
+              coords: job?.pickup,
+              reason: "Meet-and-swap required beyond driver shift — request assist",
+              vehicleHint: "van_only",
+              shiftRisk: true,
+            }),
+          });
+          logDebug(`[optimize-v2] Shift support requested for ${assign.jobId} (${resp.status})`);
+        } catch (err) {
+          console.error("Shift-risk vehicle request failed for", assign.jobId, err);
+        }
+      }
+    }
+
+    // -------------------- respond --------------------
     res.status(200).json({
       assignments,
       unassigned,
