@@ -83,31 +83,44 @@ function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
   return new Date(closeAt.getTime() - cutoffMins * 60000);
 }
 
+// ✅ Safe origin resolver (prevents cold start crash)
 function resolveOrigin(req: any) {
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  const host = req?.headers?.host;
-  if (host) return `https://${host}`;
-  return "https://srd-poc-backend.vercel.app";
+  try {
+    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+    const host = req?.headers?.host;
+    if (host) return `https://${host}`;
+    return "https://srd-poc-backend.vercel.app";
+  } catch {
+    return "https://srd-poc-backend.vercel.app";
+  }
 }
 
+// ✅ Resilient ETA matrix fetcher
 async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
-  const base = resolveOrigin(req);
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  const authHeader = req.headers?.authorization;
-  if (authHeader) headers["authorization"] = authHeader;
+  try {
+    const base = resolveOrigin(req);
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    const authHeader = req?.headers?.authorization;
+    if (authHeader) headers["authorization"] = authHeader;
 
-  const r = await fetch(`${base}/api/eta/matrix`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ origins, destinations }),
-  });
+    const r = await fetch(`${base}/api/eta/matrix`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ origins, destinations }),
+    });
 
-  if (!r.ok) {
-    const detail = await r.text().catch(() => "");
-    throw new Error(`matrix ${r.status}${detail ? `: ${detail}` : ""}`);
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      throw new Error(`matrix ${r.status}${detail ? `: ${detail}` : ""}`);
+    }
+
+    const data = await r.json();
+    return { minutes: data.minutes || [], miles: data.miles || [] };
+  } catch (err) {
+    console.error("Matrix fetch failed", err);
+    // Return safe default to avoid crashing the optimizer
+    return { minutes: [[9999]], miles: [[9999]] };
   }
-  const data = await r.json();
-  return { minutes: data.minutes || [], miles: data.miles || [] };
 }
 
 // 🪵 Debug helper
@@ -150,9 +163,10 @@ export default async function handler(req: any, res: any) {
 
     // -------------------- optimization loop --------------------
     for (const job of jobs) {
+      await new Promise((r) => setTimeout(r, 25)); // small delay for stability
+
       let drop: Coord | null = null;
-      let dropDecision: "preferred" | "secondary" | "home_fallback" =
-        "home_fallback";
+      let dropDecision: "preferred" | "secondary" | "home_fallback" = "home_fallback";
 
       const preferred = job.preferredDropPlaceId
         ? garageMap[job.preferredDropPlaceId]
@@ -197,12 +211,7 @@ export default async function handler(req: any, res: any) {
       const needsRecovery = job.issueType !== "repair";
       const eligible = vehicles.filter((v) => {
         if (!needsRecovery) return true;
-        return [
-          "van_tow",
-          "small_ramp",
-          "hiab_grabber",
-          "lorry_recovery",
-        ].includes(v.type);
+        return ["van_tow", "small_ramp", "hiab_grabber", "lorry_recovery"].includes(v.type);
       });
 
       let best: AssignmentV2 | null = null;
@@ -210,11 +219,7 @@ export default async function handler(req: any, res: any) {
       for (const v of eligible) {
         const shiftEnd = new Date(v.shiftEnd);
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
-        if (
-          minsLeft <= (policies.noNewJobLastMinutes ?? 60) &&
-          !v.allowOvertime
-        )
-          continue;
+        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
 
         const m1 = await matrix(req, [v.location], [job.pickup]);
         const leg1Min = m1.minutes[0][0];
@@ -231,34 +236,17 @@ export default async function handler(req: any, res: any) {
         let legs: RouteLeg[] = [];
 
         if (!needsSwap) {
-          // direct route
           legs = [
-            {
-              from: v.location,
-              to: job.pickup,
-              miles: leg1Miles,
-              etaMinutes: leg1Min,
-              vehicleId: v.id,
-              note: "to pickup",
-            },
-            {
-              from: job.pickup,
-              to: drop!,
-              miles: leg2Miles,
-              etaMinutes: leg2Min,
-              vehicleId: v.id,
-              note: "pickup to drop",
-            },
+            { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
+            { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
           ];
         } else if (policies.enableMeetAndSwap) {
-          // meet and swap logic
           const mid: Coord = {
             lat: (job.pickup.lat + drop!.lat) / 2,
             lng: (job.pickup.lng + drop!.lng) / 2,
           };
 
-          let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null =
-            null;
+          let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null = null;
 
           for (const v2 of eligible) {
             if (v2.id === v.id) continue;
@@ -266,8 +254,7 @@ export default async function handler(req: any, res: any) {
             const toMidMin = mA.minutes[0][0];
             const toMidMiles = mA.miles[0][0];
             if (toMidMiles <= maxMiles) {
-              if (!best2 || toMidMin < best2.toMidMin)
-                best2 = { veh: v2, toMidMin, toMidMiles };
+              if (!best2 || toMidMin < best2.toMidMin) best2 = { veh: v2, toMidMin, toMidMiles };
             }
           }
 
@@ -282,51 +269,19 @@ export default async function handler(req: any, res: any) {
 
             if (p2midMiles <= maxMiles && mid2dropMiles <= maxMiles) {
               legs = [
-                {
-                  from: v.location,
-                  to: job.pickup,
-                  miles: leg1Miles,
-                  etaMinutes: leg1Min,
-                  vehicleId: v.id,
-                  note: "to pickup",
-                },
-                {
-                  from: job.pickup,
-                  to: mid,
-                  miles: p2midMiles,
-                  etaMinutes: p2midMin,
-                  vehicleId: v.id,
-                  note: "to rendezvous",
-                },
-                {
-                  from: v2.location,
-                  to: mid,
-                  miles: best2.toMidMiles,
-                  etaMinutes: best2.toMidMin,
-                  vehicleId: v2.id,
-                  note: "second vehicle to rendezvous",
-                },
-                {
-                  from: mid,
-                  to: drop!,
-                  miles: mid2dropMiles,
-                  etaMinutes: mid2dropMin,
-                  vehicleId: v2.id,
-                  note: "to drop (swap)",
-                },
+                { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
+                { from: job.pickup, to: mid, miles: p2midMiles, etaMinutes: p2midMin, vehicleId: v.id, note: "to rendezvous" },
+                { from: v2.location, to: mid, miles: best2.toMidMiles, etaMinutes: best2.toMidMin, vehicleId: v2.id, note: "second vehicle to rendezvous" },
+                { from: mid, to: drop!, miles: mid2dropMiles, etaMinutes: mid2dropMin, vehicleId: v2.id, note: "to drop (swap)" },
               ];
             }
           }
         }
 
-        const totalMin =
-          leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
+        const totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
         const willExceedShift =
           new Date(now.getTime() + totalMin * 60000) >
-          new Date(
-            shiftEnd.getTime() +
-              (policies.maxOvertimeMinutes ?? 0) * 60000
-          );
+          new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
 
         const assign: AssignmentV2 = {
           jobId: job.id,
@@ -341,28 +296,19 @@ export default async function handler(req: any, res: any) {
               : "Direct within per-leg miles limit.",
         };
 
-        if (
-          !best ||
-          legs.reduce((a, l) => a + l.etaMinutes, 0) <
-            best.legs.reduce((a, l) => a + l.etaMinutes, 0)
-        )
-          best = assign;
+        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0)) best = assign;
       }
 
       if (best) {
         assignments.push(best);
-        logDebug(
-          `Job ${job.id} assigned: ${best.legs.length} legs (${best.reason})`
-        );
+        logDebug(`Job ${job.id} assigned: ${best.legs.length} legs (${best.reason})`);
       } else {
         unassigned.push(job.id);
         logDebug(`Job ${job.id} could not be assigned`);
       }
     }
 
-    logDebug(
-      `Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`
-    );
+    logDebug(`Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`);
 
     // -------------------- respond --------------------
     res.status(200).json({
@@ -372,9 +318,6 @@ export default async function handler(req: any, res: any) {
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
-    res.status(500).json({
-      error: "Internal error",
-      detail: String(e?.message || e),
-    });
+    res.status(500).json({ error: "Internal error", detail: String(e?.message || e) });
   }
 }
