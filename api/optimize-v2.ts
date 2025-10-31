@@ -83,15 +83,22 @@ function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
   return new Date(closeAt.getTime() - cutoffMins * 60000);
 }
 
-// ✅ Safe origin resolver (prevents cold start crash)
+// ✅ Permanent fix: always point vehicle requests to backend API
 function resolveOrigin(req: any) {
+  const backend = process.env.SRD_BACKEND_URL || "https://srd-poc-backend.vercel.app";
+
+  // For optimizer itself or vehicle requests, always use backend
+  if (req?.url?.includes("/optimize-v2")) {
+    return backend;
+  }
+
   try {
     if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
     const host = req?.headers?.host;
     if (host) return `https://${host}`;
-    return "https://srd-poc-backend.vercel.app";
+    return backend;
   } catch {
-    return "https://srd-poc-backend.vercel.app";
+    return backend;
   }
 }
 
@@ -118,8 +125,7 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
     return { minutes: data.minutes || [], miles: data.miles || [] };
   } catch (err) {
     console.error("Matrix fetch failed", err);
-    // Return safe default to avoid crashing the optimizer
-    return { minutes: [[9999]], miles: [[9999]] };
+    return { minutes: [[9999]], miles: [[9999]] }; // safe default
   }
 }
 
@@ -131,12 +137,12 @@ function logDebug(...args: any[]) {
 // -------------------- main handler --------------------
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST")
+  if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
+  }
 
   try {
-    const body =
-      typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+    const body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
     const now = body?.now ? new Date(body.now) : new Date();
 
     const jobs: JobV2[] = body?.jobs ?? [];
@@ -168,12 +174,8 @@ export default async function handler(req: any, res: any) {
       let drop: Coord | null = null;
       let dropDecision: "preferred" | "secondary" | "home_fallback" = "home_fallback";
 
-      const preferred = job.preferredDropPlaceId
-        ? garageMap[job.preferredDropPlaceId]
-        : undefined;
-      const secondary = job.secondaryDropPlaceId
-        ? garageMap[job.secondaryDropPlaceId]
-        : undefined;
+      const preferred = job.preferredDropPlaceId ? garageMap[job.preferredDropPlaceId] : undefined;
+      const secondary = job.secondaryDropPlaceId ? garageMap[job.secondaryDropPlaceId] : undefined;
 
       if (preferred?.coords) {
         const cutoff = todaysCutoff(
@@ -310,7 +312,6 @@ export default async function handler(req: any, res: any) {
 
     logDebug(`Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`);
 
-    // -------------------- respond --------------------
     res.status(200).json({
       assignments,
       unassigned,
