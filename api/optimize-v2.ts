@@ -1,4 +1,5 @@
 // api/optimize-v2.ts
+
 type Coord = { lat: number; lng: number };
 type VehicleType =
   | "van_only"
@@ -66,12 +67,14 @@ type AssignmentV2 = {
 };
 
 // -------------------- helpers --------------------
+
 function hhmmToDate(base: Date, hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
   const d = new Date(base);
   d.setHours(h, m, 0, 0);
   return d;
 }
+
 function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
   const dow = date.getDay();
   const today = hours?.find((h) => h.day === dow);
@@ -108,6 +111,7 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
 }
 
 // -------------------- main handler --------------------
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method Not Allowed" });
@@ -115,7 +119,8 @@ export default async function handler(req: any, res: any) {
   try {
     const body =
       typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
-    const now = new Date(body?.now || new Date().toISOString());
+    const now = body?.now ? new Date(body.now) : new Date();
+
     const jobs: JobV2[] = body?.jobs ?? [];
     const vehicles: Vehicle[] = body?.vehicles ?? [];
     const garages: Garage[] = body?.garages ?? [];
@@ -138,9 +143,15 @@ export default async function handler(req: any, res: any) {
     // -------------------- optimization loop --------------------
     for (const job of jobs) {
       let drop: Coord | null = null;
-      let dropDecision: "preferred" | "secondary" | "home_fallback" = "home_fallback";
-      const preferred = job.preferredDropPlaceId ? garageMap[job.preferredDropPlaceId] : undefined;
-      const secondary = job.secondaryDropPlaceId ? garageMap[job.secondaryDropPlaceId] : undefined;
+      let dropDecision: "preferred" | "secondary" | "home_fallback" =
+        "home_fallback";
+
+      const preferred = job.preferredDropPlaceId
+        ? garageMap[job.preferredDropPlaceId]
+        : undefined;
+      const secondary = job.secondaryDropPlaceId
+        ? garageMap[job.secondaryDropPlaceId]
+        : undefined;
 
       if (preferred?.coords) {
         const cutoff = todaysCutoff(
@@ -155,6 +166,7 @@ export default async function handler(req: any, res: any) {
           dropDecision = "preferred";
         }
       }
+
       if (!drop && secondary?.coords) {
         const cutoff = todaysCutoff(
           now,
@@ -168,6 +180,7 @@ export default async function handler(req: any, res: any) {
           dropDecision = "secondary";
         }
       }
+
       if (!drop) {
         drop = job.homeFallback;
         dropDecision = "home_fallback";
@@ -176,7 +189,12 @@ export default async function handler(req: any, res: any) {
       const needsRecovery = job.issueType !== "repair";
       const eligible = vehicles.filter((v) => {
         if (!needsRecovery) return true;
-        return ["van_tow", "small_ramp", "hiab_grabber", "lorry_recovery"].includes(v.type);
+        return [
+          "van_tow",
+          "small_ramp",
+          "hiab_grabber",
+          "lorry_recovery",
+        ].includes(v.type);
       });
 
       let best: AssignmentV2 | null = null;
@@ -184,7 +202,11 @@ export default async function handler(req: any, res: any) {
       for (const v of eligible) {
         const shiftEnd = new Date(v.shiftEnd);
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
-        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
+        if (
+          minsLeft <= (policies.noNewJobLastMinutes ?? 60) &&
+          !v.allowOvertime
+        )
+          continue;
 
         const m1 = await matrix(req, [v.location], [job.pickup]);
         const leg1Min = m1.minutes[0][0];
@@ -195,62 +217,108 @@ export default async function handler(req: any, res: any) {
         const leg2Min = m2.minutes[0][0];
         const leg2Miles = m2.miles[0][0];
 
-        let legs: RouteLeg[] = [];
-        let totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
-        let willExceedShift =
-          new Date(now.getTime() + totalMin * 60000) >
-          new Date(shiftEnd.getTime() + (policies.maxOvertimeMinutes ?? 0) * 60000);
+        const maxMiles = policies.maxLegMiles ?? 30;
+        const needsSwap = leg1Miles > maxMiles || leg2Miles > maxMiles;
 
-        if (leg2Miles <= (policies.maxLegMiles ?? 30)) {
-          // ---- SRD-PATCH: make meet-and-swap mandatory ----
-          const maxMiles = policies.maxLegMiles ?? 30;
-          const needsSwap = leg1Miles > maxMiles || leg2Miles > maxMiles;
-          
-          if (!needsSwap) {
-            // Direct route valid
-            legs = [
-              { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
-              { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
-            ];
-          } else {
-            // Always try meet-and-swap before unassignment
-            const mid: Coord = {
-              lat: (job.pickup.lat + drop!.lat) / 2,
-              lng: (job.pickup.lng + drop!.lng) / 2,
-            };
-            let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null = null;
-          
-            for (const v2 of eligible) {
-              if (v2.id === v.id) continue;
-              const mA = await matrix(req, [v2.location], [mid]);
-              const toMidMin = mA.minutes[0][0];
-              const toMidMiles = mA.miles[0][0];
-              if (toMidMiles <= maxMiles) {
-                if (!best2 || toMidMin < best2.toMidMin)
-                  best2 = { veh: v2, toMidMin, toMidMiles };
-              }
-            }
-          
-            if (best2) {
-              const v2 = best2.veh;
-              const mB = await matrix(req, [job.pickup], [mid]);
-              const p2midMin = mB.minutes[0][0];
-              const p2midMiles = mB.miles[0][0];
-              const mC = await matrix(req, [mid], [drop!]);
-              const mid2dropMin = mC.minutes[0][0];
-              const mid2dropMiles = mC.miles[0][0];
-          
-              if (p2midMiles <= maxMiles && mid2dropMiles <= maxMiles) {
-                legs = [
-                  { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
-                  { from: job.pickup, to: mid, miles: p2midMiles, etaMinutes: p2midMin, vehicleId: v.id, note: "to rendezvous" },
-                  { from: v2.location, to: mid, miles: best2.toMidMiles, etaMinutes: best2.toMidMin, vehicleId: v2.id, note: "second vehicle to rendezvous" },
-                  { from: mid, to: drop!, miles: mid2dropMiles, etaMinutes: mid2dropMin, vehicleId: v2.id, note: "to drop (swap)" },
-                ];
-              }
+        let legs: RouteLeg[] = [];
+
+        if (!needsSwap) {
+          // direct route
+          legs = [
+            {
+              from: v.location,
+              to: job.pickup,
+              miles: leg1Miles,
+              etaMinutes: leg1Min,
+              vehicleId: v.id,
+              note: "to pickup",
+            },
+            {
+              from: job.pickup,
+              to: drop!,
+              miles: leg2Miles,
+              etaMinutes: leg2Min,
+              vehicleId: v.id,
+              note: "pickup to drop",
+            },
+          ];
+        } else if (policies.enableMeetAndSwap) {
+          // meet and swap logic
+          const mid: Coord = {
+            lat: (job.pickup.lat + drop!.lat) / 2,
+            lng: (job.pickup.lng + drop!.lng) / 2,
+          };
+
+          let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null =
+            null;
+
+          for (const v2 of eligible) {
+            if (v2.id === v.id) continue;
+            const mA = await matrix(req, [v2.location], [mid]);
+            const toMidMin = mA.minutes[0][0];
+            const toMidMiles = mA.miles[0][0];
+            if (toMidMiles <= maxMiles) {
+              if (!best2 || toMidMin < best2.toMidMin)
+                best2 = { veh: v2, toMidMin, toMidMiles };
             }
           }
-// ---- end SRD-PATCH ----
+
+          if (best2) {
+            const v2 = best2.veh;
+            const mB = await matrix(req, [job.pickup], [mid]);
+            const p2midMin = mB.minutes[0][0];
+            const p2midMiles = mB.miles[0][0];
+            const mC = await matrix(req, [mid], [drop!]);
+            const mid2dropMin = mC.minutes[0][0];
+            const mid2dropMiles = mC.miles[0][0];
+
+            if (p2midMiles <= maxMiles && mid2dropMiles <= maxMiles) {
+              legs = [
+                {
+                  from: v.location,
+                  to: job.pickup,
+                  miles: leg1Miles,
+                  etaMinutes: leg1Min,
+                  vehicleId: v.id,
+                  note: "to pickup",
+                },
+                {
+                  from: job.pickup,
+                  to: mid,
+                  miles: p2midMiles,
+                  etaMinutes: p2midMin,
+                  vehicleId: v.id,
+                  note: "to rendezvous",
+                },
+                {
+                  from: v2.location,
+                  to: mid,
+                  miles: best2.toMidMiles,
+                  etaMinutes: best2.toMidMin,
+                  vehicleId: v2.id,
+                  note: "second vehicle to rendezvous",
+                },
+                {
+                  from: mid,
+                  to: drop!,
+                  miles: mid2dropMiles,
+                  etaMinutes: mid2dropMin,
+                  vehicleId: v2.id,
+                  note: "to drop (swap)",
+                },
+              ];
+            }
+          }
+        }
+
+        const totalMin =
+          leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
+        const willExceedShift =
+          new Date(now.getTime() + totalMin * 60000) >
+          new Date(
+            shiftEnd.getTime() +
+              (policies.maxOvertimeMinutes ?? 0) * 60000
+          );
 
         const assign: AssignmentV2 = {
           jobId: job.id,
@@ -265,7 +333,11 @@ export default async function handler(req: any, res: any) {
               : "Direct within per-leg miles limit.",
         };
 
-        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0))
+        if (
+          !best ||
+          legs.reduce((a, l) => a + l.etaMinutes, 0) <
+            best.legs.reduce((a, l) => a + l.etaMinutes, 0)
+        )
           best = assign;
       }
 
@@ -321,12 +393,16 @@ export default async function handler(req: any, res: any) {
             }),
           });
         } catch (err) {
-          console.error("Shift-risk vehicle request failed for", a.jobId, err);
+          console.error(
+            "Shift-risk vehicle request failed for",
+            a.jobId,
+            err
+          );
         }
       }
     }
 
-    // -------------------- NEW: persist last optimization --------------------
+    // -------------------- persist last optimization --------------------
     (globalThis as any).latestOptimizationRun = {
       timestamp: new Date().toISOString(),
       jobs,
@@ -343,6 +419,9 @@ export default async function handler(req: any, res: any) {
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
-    res.status(500).json({ error: "Internal error", detail: String(e?.message || e) });
+    res.status(500).json({
+      error: "Internal error",
+      detail: String(e?.message || e),
+    });
   }
 }
