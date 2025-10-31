@@ -252,10 +252,6 @@ export default async function handler(req: any, res: any) {
           }
 // ---- end SRD-PATCH ----
 
-            } else continue;
-          } else continue;
-        } else continue;
-
         const assign: AssignmentV2 = {
           jobId: job.id,
           legs,
