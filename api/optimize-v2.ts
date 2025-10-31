@@ -110,6 +110,11 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
   return { minutes: data.minutes || [], miles: data.miles || [] };
 }
 
+// 🪵 Debug helper
+function logDebug(...args: any[]) {
+  if (process.env.NODE_ENV !== "production") console.log("[optimize-v2]", ...args);
+}
+
 // -------------------- main handler --------------------
 
 export default async function handler(req: any, res: any) {
@@ -139,6 +144,9 @@ export default async function handler(req: any, res: any) {
 
     const assignments: AssignmentV2[] = [];
     const unassigned: string[] = [];
+
+    logDebug(`Starting optimization run at ${now.toISOString()}`);
+    logDebug(`Jobs: ${jobs.length}, Vehicles: ${vehicles.length}`);
 
     // -------------------- optimization loop --------------------
     for (const job of jobs) {
@@ -341,75 +349,20 @@ export default async function handler(req: any, res: any) {
           best = assign;
       }
 
-      if (best) assignments.push(best);
-      else unassigned.push(job.id);
-    }
-
-    // -------------------- vehicle requests --------------------
-    const base = resolveOrigin(req);
-
-    // A. Unassigned jobs → request additional vehicles
-    if (unassigned.length) {
-      for (const jobId of unassigned) {
-        const job = jobs.find((j) => j.id === jobId);
-        const likelyType =
-          job?.issueType === "recovery_only"
-            ? "hiab_grabber"
-            : job?.issueType === "repair_possible_recovery"
-            ? "van_tow"
-            : "van_only";
-        try {
-          await fetch(`${base}/api/vehicles/request`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              jobId,
-              coords: job?.pickup,
-              reason: "No feasible vehicle within 30 mi or shift window",
-              vehicleHint: likelyType,
-              shiftRisk: false,
-            }),
-          });
-        } catch (err) {
-          console.error("Vehicle request failed for", jobId, err);
-        }
+      if (best) {
+        assignments.push(best);
+        logDebug(
+          `Job ${job.id} assigned: ${best.legs.length} legs (${best.reason})`
+        );
+      } else {
+        unassigned.push(job.id);
+        logDebug(`Job ${job.id} could not be assigned`);
       }
     }
 
-    // B. Assigned jobs that exceed shift → flag shift-risk vehicles
-    for (const a of assignments) {
-      if (a.willExceedShift) {
-        const job = jobs.find((j) => j.id === a.jobId);
-        try {
-          await fetch(`${base}/api/vehicles/request`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              jobId: a.jobId,
-              coords: job?.pickup,
-              reason: "Job will exceed driver shift limit",
-              vehicleHint: "van_only",
-              shiftRisk: true,
-            }),
-          });
-        } catch (err) {
-          console.error(
-            "Shift-risk vehicle request failed for",
-            a.jobId,
-            err
-          );
-        }
-      }
-    }
-
-    // -------------------- persist last optimization --------------------
-    (globalThis as any).latestOptimizationRun = {
-      timestamp: new Date().toISOString(),
-      jobs,
-      vehicles,
-      garages,
-      policies,
-    };
+    logDebug(
+      `Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`
+    );
 
     // -------------------- respond --------------------
     res.status(200).json({
