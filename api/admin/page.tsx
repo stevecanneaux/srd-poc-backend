@@ -1,58 +1,87 @@
-import { useState } from 'react';
-import VehiclesManager from './components/VehiclesManager';
-import JobsManager from './components/JobsManager';
-import PolicySettings from './components/PolicySettings';
-import OptimizerRunner from './components/OptimizerRunner';
-import ResultsTable from './components/ResultsTable';
-import MapDisplay from './components/MapDisplay';
-import AdminPromptModal from './components/AdminPromptModal';
-import FooterControls from './components/FooterControls';
+"use client";
 
-export default function AdminDashboardPage() {
-  const [activeTab, setActiveTab] = useState<'vehicles' | 'jobs' | 'policies' | 'results' | 'map'>('vehicles');
-  const [optimizerData, setOptimizerData] = useState<any>(null);
-  const [showPrompt, setShowPrompt] = useState(false);
+import { useState } from "react";
+import VehiclesManager from "./components/VehiclesManager";
+import JobsManager from "./components/JobsManager";
+import PolicySettings from "./components/PolicySettings";
+import OptimizerRunner from "./components/OptimizerRunner";
+import MissingVehiclesPrompt from "./components/MissingVehiclesPrompt";
+
+export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState<
+    "vehicles" | "jobs" | "policies" | "results"
+  >("vehicles");
+
   const [missingVehicles, setMissingVehicles] = useState<any[]>([]);
+  const [optimizerResults, setOptimizerResults] = useState<any>(null);
+
+  // When admin fills in missing vehicles
+  function handleMissingVehicleSubmit(newVehicles: any[]) {
+    const stored = JSON.parse(localStorage.getItem("vehicles") || "[]");
+    const updated = [
+      ...stored,
+      ...newVehicles.map((v) => ({
+        id: `V${Math.floor(Math.random() * 10000)}`,
+        type: v.vehicleType,
+        location: { lat: 0, lng: 0 }, // Placeholder; geocoded later
+        shiftEnd: v.shiftEnd,
+        allowOvertime: false,
+        capabilities: [],
+      })),
+    ];
+
+    localStorage.setItem("vehicles", JSON.stringify(updated));
+    setMissingVehicles([]);
+    alert("✅ New vehicles added to schedule. Please re-run optimizer.");
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Top Navigation */}
-      <header className="bg-white shadow-md p-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-800">SRD Dispatch Control Panel</h1>
-        <div className="flex space-x-4">
-          <button onClick={() => setActiveTab('vehicles')} className={`px-4 py-2 rounded ${activeTab === 'vehicles' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Vehicles</button>
-          <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 rounded ${activeTab === 'jobs' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Jobs</button>
-          <button onClick={() => setActiveTab('policies')} className={`px-4 py-2 rounded ${activeTab === 'policies' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Policies</button>
-          <button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Results</button>
-          <button onClick={() => setActiveTab('map')} className={`px-4 py-2 rounded ${activeTab === 'map' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Map</button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-gray-100 p-6">
+      <h1 className="text-3xl font-bold text-gray-800 mb-6">
+        🚚 SRD Dispatch Optimization Dashboard
+      </h1>
 
-      {/* Main Content */}
-      <main className="flex-1 p-6 overflow-y-auto">
-        {activeTab === 'vehicles' && <VehiclesManager />}
-        {activeTab === 'jobs' && <JobsManager />}
-        {activeTab === 'policies' && <PolicySettings />}
-        {activeTab === 'results' && (
+      {/* Navigation Tabs */}
+      <div className="flex space-x-2 mb-6">
+        {[
+          { id: "vehicles", label: "Vehicles" },
+          { id: "jobs", label: "Jobs" },
+          { id: "policies", label: "Policies" },
+          { id: "results", label: "Run Optimizer" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`px-4 py-2 rounded ${
+              activeTab === tab.id
+                ? "bg-blue-600 text-white"
+                : "bg-white border text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      <div className="space-y-6">
+        {activeTab === "vehicles" && <VehiclesManager />}
+        {activeTab === "jobs" && <JobsManager />}
+        {activeTab === "policies" && <PolicySettings />}
+        {activeTab === "results" && (
           <OptimizerRunner
-            onRunComplete={(data) => setOptimizerData(data)}
-            onMissingVehicles={(vehicles) => {
-              setMissingVehicles(vehicles);
-              setShowPrompt(true);
-            }}
+            onRunComplete={(data: any) => setOptimizerResults(data)}
+            onMissingVehicles={(missing: any[]) => setMissingVehicles(missing)}
           />
         )}
-        {activeTab === 'map' && <MapDisplay optimizerData={optimizerData} />}
-      </main>
+      </div>
 
-      {/* Footer Controls */}
-      <FooterControls />
-
-      {/* Admin Prompt Modal */}
-      {showPrompt && (
-        <AdminPromptModal
-          missingVehicles={missingVehicles}
-          onClose={() => setShowPrompt(false)}
+      {/* Missing Vehicle Prompt */}
+      {missingVehicles.length > 0 && (
+        <MissingVehiclesPrompt
+          missing={missingVehicles}
+          onSubmit={handleMissingVehicleSubmit}
+          onClose={() => setMissingVehicles([])}
         />
       )}
     </div>
