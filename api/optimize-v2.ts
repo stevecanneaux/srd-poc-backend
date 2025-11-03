@@ -29,6 +29,7 @@ type JobV2 = {
   secondaryDropPlaceId?: string;
   homeFallback: Coord;
   priority?: number;
+  postcodeHint?: string; // optional field for admin clarity
 };
 
 type Weekly = { day: number; open: string; close: string };
@@ -83,15 +84,8 @@ function todaysCutoff(date: Date, hours?: Weekly[], cutoffMins = 30) {
   return new Date(closeAt.getTime() - cutoffMins * 60000);
 }
 
-// ✅ Permanent fix: always point vehicle requests to backend API
 function resolveOrigin(req: any) {
   const backend = process.env.SRD_BACKEND_URL || "https://srd-poc-backend.vercel.app";
-
-  // For optimizer itself or vehicle requests, always use backend
-  if (req?.url?.includes("/optimize-v2")) {
-    return backend;
-  }
-
   try {
     if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
     const host = req?.headers?.host;
@@ -102,7 +96,6 @@ function resolveOrigin(req: any) {
   }
 }
 
-// ✅ Resilient ETA matrix fetcher
 async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
   try {
     const base = resolveOrigin(req);
@@ -125,11 +118,10 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
     return { minutes: data.minutes || [], miles: data.miles || [] };
   } catch (err) {
     console.error("Matrix fetch failed", err);
-    return { minutes: [[9999]], miles: [[9999]] }; // safe default
+    return { minutes: [[9999]], miles: [[9999]] }; // fallback safe default
   }
 }
 
-// 🪵 Debug helper
 function logDebug(...args: any[]) {
   if (process.env.NODE_ENV !== "production") console.log("[optimize-v2]", ...args);
 }
@@ -137,9 +129,8 @@ function logDebug(...args: any[]) {
 // -------------------- main handler --------------------
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
+  if (req.method !== "POST")
     return res.status(405).json({ error: "Method Not Allowed" });
-  }
 
   try {
     const body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
@@ -169,7 +160,7 @@ export default async function handler(req: any, res: any) {
 
     // -------------------- optimization loop --------------------
     for (const job of jobs) {
-      await new Promise((r) => setTimeout(r, 25)); // small delay for stability
+      await new Promise((r) => setTimeout(r, 25));
 
       let drop: Coord | null = null;
       let dropDecision: "preferred" | "secondary" | "home_fallback" = "home_fallback";
@@ -182,8 +173,7 @@ export default async function handler(req: any, res: any) {
           now,
           preferred.openingHours,
           preferred.intakeCutoffMinutesBeforeClose ??
-            policies.intakeCutoffMinutesBeforeClose ??
-            30
+            policies.intakeCutoffMinutesBeforeClose ?? 30
         );
         if (now <= cutoff) {
           drop = preferred.coords;
@@ -196,8 +186,7 @@ export default async function handler(req: any, res: any) {
           now,
           secondary.openingHours,
           secondary.intakeCutoffMinutesBeforeClose ??
-            policies.intakeCutoffMinutesBeforeClose ??
-            30
+            policies.intakeCutoffMinutesBeforeClose ?? 30
         );
         if (now <= cutoff) {
           drop = secondary.coords;
@@ -298,7 +287,8 @@ export default async function handler(req: any, res: any) {
               : "Direct within per-leg miles limit.",
         };
 
-        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0)) best = assign;
+        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0))
+          best = assign;
       }
 
       if (best) {
@@ -310,75 +300,39 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    logDebug(`Optimization complete. Assigned: ${assignments.length}, Unassigned: ${unassigned.length}`);
+    // -------------------- ADMIN PROMPT BLOCK --------------------
 
-    // -------------------- vehicle or meet-swap fallback logic --------------------
+    const missingVehicles = unassigned.map((jobId) => {
+      const job = jobs.find((j) => j.id === jobId);
+      if (!job) return null;
 
-    // A. Unassigned jobs → request additional vehicles
-    if (unassigned.length) {
-      const base = resolveOrigin(req);
+      const typeNeeded =
+        job.issueType === "recovery_only"
+          ? "hiab_grabber"
+          : job.issueType === "repair_possible_recovery"
+          ? "van_tow"
+          : "van_only";
 
-      for (const jobId of unassigned) {
-        const job = jobs.find((j) => j.id === jobId);
-        if (!job) continue;
+      return {
+        jobId: job.id,
+        vehicleType: typeNeeded,
+        pickupHint: job.postcodeHint || "near pickup area",
+        coords: job.pickup,
+      };
+    }).filter(Boolean);
 
-        const likelyType =
-          job.issueType === "recovery_only"
-            ? "hiab_grabber"
-            : job.issueType === "repair_possible_recovery"
-            ? "van_tow"
-            : "van_only";
-
-        try {
-          const resp = await fetch(`${base}/api/vehicles/request`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              jobId,
-              coords: job.pickup,
-              reason: "No feasible vehicle within 30 mi or shift window — requesting reinforcement",
-              vehicleHint: likelyType,
-              shiftRisk: false,
-            }),
-          });
-
-          logDebug(
-            `[optimize-v2] Vehicle request for ${jobId} → ${resp.status} ${resp.ok ? "✅" : "❌"}`
-          );
-        } catch (err) {
-          console.error("Vehicle request failed for", jobId, err);
-        }
-      }
-    }
-
-    // B. Meet-and-swap routes that exceed shift → request assist vehicle
-    for (const assign of assignments) {
-      if (assign.willExceedShift && assign.legs.length > 2) {
-        const job = jobs.find((j) => j.id === assign.jobId);
-        try {
-          const resp = await fetch(`${resolveOrigin(req)}/api/vehicles/request`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              jobId: assign.jobId,
-              coords: job?.pickup,
-              reason: "Meet-and-swap required beyond driver shift — request assist",
-              vehicleHint: "van_only",
-              shiftRisk: true,
-            }),
-          });
-          logDebug(`[optimize-v2] Shift support requested for ${assign.jobId} (${resp.status})`);
-        } catch (err) {
-          console.error("Shift-risk vehicle request failed for", assign.jobId, err);
-        }
-      }
-    }
+    const adminPrompt =
+      missingVehicles.length > 0
+        ? `${missingVehicles.length} additional vehicle${missingVehicles.length > 1 ? "s" : ""} required to complete all jobs.`
+        : "All jobs covered.";
 
     // -------------------- respond --------------------
     res.status(200).json({
       assignments,
       unassigned,
-      notes: "optimize-v2 using real miles (auth forwarded)",
+      missingVehicles,
+      adminPrompt,
+      notes: "optimize-v2 using real miles (admin prompt mode)",
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
