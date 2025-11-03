@@ -15,7 +15,7 @@ type Vehicle = {
   id: string;
   type: VehicleType;
   location: Coord;
-  shiftEnd: string; // ISO
+  shiftEnd: string;
   capabilities?: string[];
   allowOvertime?: boolean;
 };
@@ -29,7 +29,7 @@ type JobV2 = {
   secondaryDropPlaceId?: string;
   homeFallback: Coord;
   priority?: number;
-  postcodeHint?: string; // optional field for admin clarity
+  postcodeHint?: string;
 };
 
 type Weekly = { day: number; open: string; close: string };
@@ -118,7 +118,7 @@ async function matrix(req: any, origins: Coord[], destinations: Coord[]) {
     return { minutes: data.minutes || [], miles: data.miles || [] };
   } catch (err) {
     console.error("Matrix fetch failed", err);
-    return { minutes: [[9999]], miles: [[9999]] }; // fallback safe default
+    return { minutes: [[9999]], miles: [[9999]] };
   }
 }
 
@@ -136,8 +136,14 @@ export default async function handler(req: any, res: any) {
     const body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
     const now = body?.now ? new Date(body.now) : new Date();
 
+    // ✅ Merge live vehicles with admin-added ones
+    const manualVehicles: Vehicle[] = (globalThis as any).pendingVehicles ?? [];
+    const vehicles: Vehicle[] = [
+      ...(body?.vehicles ?? []),
+      ...manualVehicles,
+    ];
+
     const jobs: JobV2[] = body?.jobs ?? [];
-    const vehicles: Vehicle[] = body?.vehicles ?? [];
     const garages: Garage[] = body?.garages ?? [];
     const policies: PoliciesV2 = {
       maxLegMiles: 30,
@@ -156,7 +162,7 @@ export default async function handler(req: any, res: any) {
     const unassigned: string[] = [];
 
     logDebug(`Starting optimization run at ${now.toISOString()}`);
-    logDebug(`Jobs: ${jobs.length}, Vehicles: ${vehicles.length}`);
+    logDebug(`Jobs: ${jobs.length}, Vehicles: ${vehicles.length} (includes admin-added)`);
 
     // -------------------- optimization loop --------------------
     for (const job of jobs) {
@@ -231,42 +237,6 @@ export default async function handler(req: any, res: any) {
             { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
             { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
           ];
-        } else if (policies.enableMeetAndSwap) {
-          const mid: Coord = {
-            lat: (job.pickup.lat + drop!.lat) / 2,
-            lng: (job.pickup.lng + drop!.lng) / 2,
-          };
-
-          let best2: { veh: Vehicle; toMidMin: number; toMidMiles: number } | null = null;
-
-          for (const v2 of eligible) {
-            if (v2.id === v.id) continue;
-            const mA = await matrix(req, [v2.location], [mid]);
-            const toMidMin = mA.minutes[0][0];
-            const toMidMiles = mA.miles[0][0];
-            if (toMidMiles <= maxMiles) {
-              if (!best2 || toMidMin < best2.toMidMin) best2 = { veh: v2, toMidMin, toMidMiles };
-            }
-          }
-
-          if (best2) {
-            const v2 = best2.veh;
-            const mB = await matrix(req, [job.pickup], [mid]);
-            const p2midMin = mB.minutes[0][0];
-            const p2midMiles = mB.miles[0][0];
-            const mC = await matrix(req, [mid], [drop!]);
-            const mid2dropMin = mC.minutes[0][0];
-            const mid2dropMiles = mC.miles[0][0];
-
-            if (p2midMiles <= maxMiles && mid2dropMiles <= maxMiles) {
-              legs = [
-                { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
-                { from: job.pickup, to: mid, miles: p2midMiles, etaMinutes: p2midMin, vehicleId: v.id, note: "to rendezvous" },
-                { from: v2.location, to: mid, miles: best2.toMidMiles, etaMinutes: best2.toMidMin, vehicleId: v2.id, note: "second vehicle to rendezvous" },
-                { from: mid, to: drop!, miles: mid2dropMiles, etaMinutes: mid2dropMin, vehicleId: v2.id, note: "to drop (swap)" },
-              ];
-            }
-          }
         }
 
         const totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
@@ -282,8 +252,6 @@ export default async function handler(req: any, res: any) {
           reason:
             dropDecision === "home_fallback"
               ? "Garage cut-off passed; defaulting to customer home."
-              : policies.enableMeetAndSwap && legs.length > 2
-              ? "Meet-and-swap planned to keep legs ≤ allowed miles."
               : "Direct within per-leg miles limit.",
         };
 
@@ -293,7 +261,7 @@ export default async function handler(req: any, res: any) {
 
       if (best) {
         assignments.push(best);
-        logDebug(`Job ${job.id} assigned: ${best.legs.length} legs (${best.reason})`);
+        logDebug(`Job ${job.id} assigned (${best.reason})`);
       } else {
         unassigned.push(job.id);
         logDebug(`Job ${job.id} could not be assigned`);
@@ -302,24 +270,26 @@ export default async function handler(req: any, res: any) {
 
     // -------------------- ADMIN PROMPT BLOCK --------------------
 
-    const missingVehicles = unassigned.map((jobId) => {
-      const job = jobs.find((j) => j.id === jobId);
-      if (!job) return null;
+    const missingVehicles = unassigned
+      .map((jobId) => {
+        const job = jobs.find((j) => j.id === jobId);
+        if (!job) return null;
 
-      const typeNeeded =
-        job.issueType === "recovery_only"
-          ? "hiab_grabber"
-          : job.issueType === "repair_possible_recovery"
-          ? "van_tow"
-          : "van_only";
+        const typeNeeded =
+          job.issueType === "recovery_only"
+            ? "hiab_grabber"
+            : job.issueType === "repair_possible_recovery"
+            ? "van_tow"
+            : "van_only";
 
-      return {
-        jobId: job.id,
-        vehicleType: typeNeeded,
-        pickupHint: job.postcodeHint || "near pickup area",
-        coords: job.pickup,
-      };
-    }).filter(Boolean);
+        return {
+          jobId: job.id,
+          vehicleType: typeNeeded,
+          pickupHint: job.postcodeHint || "near pickup area",
+          coords: job.pickup,
+        };
+      })
+      .filter(Boolean);
 
     const adminPrompt =
       missingVehicles.length > 0
@@ -332,7 +302,7 @@ export default async function handler(req: any, res: any) {
       unassigned,
       missingVehicles,
       adminPrompt,
-      notes: "optimize-v2 using real miles (admin prompt mode)",
+      notes: "optimize-v2 using real miles (admin-managed vehicles enabled)",
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
