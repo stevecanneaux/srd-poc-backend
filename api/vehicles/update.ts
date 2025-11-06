@@ -1,67 +1,41 @@
 // api/vehicles/update.ts
-
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import fs from "fs";
+import path from "path";
 
-type Coord = { lat: number; lng: number };
-type VehicleType =
-  | "van_only"
-  | "van_tow"
-  | "small_ramp"
-  | "hiab_grabber"
-  | "lorry_recovery";
+const filePath = path.join("/tmp", "vehicles.json");
 
-type Vehicle = {
-  id: string;
-  type: VehicleType;
-  postcode: string;
-  shiftStart: string;
-  shiftEnd: string;
-  location?: Coord;
-};
-
-// ✅ Helper to add safe CORS headers
-function setCorsHeaders(res: VercelResponse) {
-  res.setHeader("Access-Control-Allow-Origin", "https://srd-admin-frontend.vercel.app");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+// ✅ Enable CORS
+function setCORS(res: VercelResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCorsHeaders(res);
-
-  // Handle CORS preflight request
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
+  setCORS(res);
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
     const { vehicles } = req.body;
 
-    if (!Array.isArray(vehicles)) {
-      return res.status(400).json({ error: "Invalid payload: expected { vehicles: [...] }" });
+    if (!vehicles || !Array.isArray(vehicles)) {
+      return res.status(400).json({ error: "Invalid vehicle data" });
     }
 
-    // Temporary placeholder for coordinates (until geocode integration)
-    const enriched = vehicles.map((v) => ({
-      ...v,
-      location: { lat: 51.5 + Math.random() * 0.1, lng: -0.12 + Math.random() * 0.1 },
-    }));
+    // Write vehicles to file (Vercel allows /tmp)
+    fs.writeFileSync(filePath, JSON.stringify(vehicles, null, 2));
 
-    // Store the new list in memory for optimizer access
-    (globalThis as any).pendingVehicles = enriched;
+    console.log(`🚚 Updated vehicles list (${vehicles.length} total)`);
 
-    console.log(`[vehicles/update] Stored ${enriched.length} vehicles with shifts`);
     res.status(200).json({
-      ok: true,
-      count: enriched.length,
-      note: "Vehicles with shift start & end stored for optimizer runs",
+      success: true,
+      count: vehicles.length,
+      message: "Vehicles updated and saved successfully",
     });
-  } catch (err) {
-    console.error("[vehicles/update] error", err);
-    res.status(500).json({ error: "Internal server error" });
+  } catch (err: any) {
+    console.error("Vehicle update failed:", err);
+    res.status(500).json({ error: "Internal Server Error", detail: err.message });
   }
 }
