@@ -13,6 +13,7 @@ export default function VehiclesManager() {
     id: "",
     type: "van_only",
     postcode: "",
+    shiftStart: "",
     shiftEnd: "",
   });
 
@@ -20,12 +21,18 @@ export default function VehiclesManager() {
     setForm({ ...form, [e.target.name]: e.target.value });
 
   const addVehicle = () => {
-    if (!form.id || !form.postcode || !form.shiftEnd) {
+    if (!form.id || !form.postcode || !form.shiftStart || !form.shiftEnd) {
       alert("Please fill in all fields");
       return;
     }
     setVehicles([...vehicles, form]);
-    setForm({ id: "", type: "van_only", postcode: "", shiftEnd: "" });
+    setForm({
+      id: "",
+      type: "van_only",
+      postcode: "",
+      shiftStart: "",
+      shiftEnd: "",
+    });
   };
 
   const syncWithBackend = async () => {
@@ -76,13 +83,26 @@ export default function VehiclesManager() {
           placeholder="Start Postcode"
           style={{ marginLeft: "10px", marginRight: "10px" }}
         />
+        <br />
+        <label>Shift Start:</label>
+        <input
+          type="datetime-local"
+          name="shiftStart"
+          value={form.shiftStart}
+          onChange={handleChange}
+          style={{ marginLeft: "10px", marginRight: "10px" }}
+        />
+        <label>Shift End:</label>
         <input
           type="datetime-local"
           name="shiftEnd"
           value={form.shiftEnd}
           onChange={handleChange}
+          style={{ marginLeft: "10px" }}
         />
-        <button onClick={addVehicle} style={{ marginLeft: "10px" }}>Add</button>
+        <button onClick={addVehicle} style={{ marginLeft: "10px" }}>
+          Add
+        </button>
       </section>
 
       <h3>Vehicles on Shift</h3>
@@ -92,7 +112,8 @@ export default function VehiclesManager() {
             <th>ID</th>
             <th>Type</th>
             <th>Start Postcode</th>
-            <th>Shift Ends</th>
+            <th>Shift Start</th>
+            <th>Shift End</th>
           </tr>
         </thead>
         <tbody>
@@ -101,7 +122,8 @@ export default function VehiclesManager() {
               <td>{v.id}</td>
               <td>{v.type}</td>
               <td>{v.postcode}</td>
-              <td>{v.shiftEnd}</td>
+              <td>{new Date(v.shiftStart).toLocaleString()}</td>
+              <td>{new Date(v.shiftEnd).toLocaleString()}</td>
             </tr>
           ))}
         </tbody>
