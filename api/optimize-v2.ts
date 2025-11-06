@@ -69,6 +69,13 @@ type AssignmentV2 = {
 
 // -------------------- helpers --------------------
 
+// ✅ CORS helper for frontend communication
+function setCORS(res: any) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
 function hhmmToDate(base: Date, hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
   const d = new Date(base);
@@ -129,6 +136,12 @@ function logDebug(...args: any[]) {
 // -------------------- main handler --------------------
 
 export default async function handler(req: any, res: any) {
+  // ✅ Enable CORS for all requests
+  setCORS(res);
+  if (req.method === "OPTIONS") {
+    return res.status(200).end(); // Handle CORS preflight
+  }
+
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method Not Allowed" });
 
@@ -228,16 +241,11 @@ export default async function handler(req: any, res: any) {
         const leg2Miles = m2.miles[0][0];
 
         const maxMiles = policies.maxLegMiles ?? 30;
-        const needsSwap = leg1Miles > maxMiles || leg2Miles > maxMiles;
 
-        let legs: RouteLeg[] = [];
-
-        if (!needsSwap) {
-          legs = [
-            { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
-            { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
-          ];
-        }
+        const legs: RouteLeg[] = [
+          { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
+          { from: job.pickup, to: drop!, miles: leg2Miles, etaMinutes: leg2Min, vehicleId: v.id, note: "pickup to drop" },
+        ];
 
         const totalMin = leg1Min + (policies.serviceMinutes ?? 10) + leg2Min;
         const willExceedShift =
@@ -269,7 +277,6 @@ export default async function handler(req: any, res: any) {
     }
 
     // -------------------- ADMIN PROMPT BLOCK --------------------
-
     const missingVehicles = unassigned
       .map((jobId) => {
         const job = jobs.find((j) => j.id === jobId);
