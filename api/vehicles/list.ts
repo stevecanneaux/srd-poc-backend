@@ -1,31 +1,33 @@
 // api/vehicles/list.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import fs from "fs";
-import path from "path";
+import { Redis } from "@upstash/redis";
 
-const filePath = path.join("/tmp", "vehicles.json");
+// ✅ Connect to Upstash Redis using Vercel env vars
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
-// ✅ Enable CORS
+// ✅ CORS setup
 function setCORS(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Cache-Control", "no-store");
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCORS(res);
   if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "GET") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
-    let vehicles: any[] = [];
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, "utf-8");
-      vehicles = JSON.parse(data);
-    }
+    // ✅ Get vehicles from Redis
+    const vehicles = (await redis.get("vehicles:list")) || [];
 
     res.status(200).json({
       success: true,
-      count: vehicles.length,
+      count: Array.isArray(vehicles) ? vehicles.length : 0,
       vehicles,
     });
   } catch (err: any) {
