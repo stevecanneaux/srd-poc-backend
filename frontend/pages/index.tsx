@@ -1,10 +1,32 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 export default function Home() {
+  const [status, setStatus] = useState("Checking connection...");
+
+  useEffect(() => {
+    async function testBackend() {
+      try {
+        const res = await fetch("https://srd-poc-backend.vercel.app/api/optimize-v2", {
+          method: "GET",
+        });
+
+        if (res.status === 405) {
+          setStatus("✅ Connected to backend (API online)");
+        } else {
+          setStatus(`⚠️ Unexpected response: ${res.status}`);
+        }
+      } catch (err) {
+        setStatus("❌ Cannot reach backend");
+      }
+    }
+
+    testBackend();
+  }, []);
+
   return (
     <main style={{ fontFamily: "sans-serif", padding: "2rem" }}>
       <h1>🚀 SRD Admin Dashboard</h1>
-      <p>Welcome to the admin control panel.</p>
+      <p>{status}</p>
 
       <h3>Available Sections:</h3>
       <ul>
