@@ -15,6 +15,7 @@ type Vehicle = {
   id: string;
   type: VehicleType;
   location: Coord;
+  shiftStart?: string; // ✅ Added
   shiftEnd: string;
   capabilities?: string[];
   allowOvertime?: boolean;
@@ -227,9 +228,20 @@ export default async function handler(req: any, res: any) {
       let best: AssignmentV2 | null = null;
 
       for (const v of eligible) {
+        // ✅ New: respect shift start times
+        const shiftStart = new Date(v.shiftStart || now);
         const shiftEnd = new Date(v.shiftEnd);
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
-        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
+
+        if (now < shiftStart) {
+          logDebug(`Skipping ${v.id} — shift not started (${shiftStart.toISOString()})`);
+          continue;
+        }
+
+        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) {
+          logDebug(`Skipping ${v.id} — shift ending soon (${shiftEnd.toISOString()})`);
+          continue;
+        }
 
         const m1 = await matrix(req, [v.location], [job.pickup]);
         const leg1Min = m1.minutes[0][0];
@@ -239,8 +251,6 @@ export default async function handler(req: any, res: any) {
         const m2 = await matrix(req, [job.pickup], [drop!]);
         const leg2Min = m2.minutes[0][0];
         const leg2Miles = m2.miles[0][0];
-
-        const maxMiles = policies.maxLegMiles ?? 30;
 
         const legs: RouteLeg[] = [
           { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
@@ -309,7 +319,7 @@ export default async function handler(req: any, res: any) {
       unassigned,
       missingVehicles,
       adminPrompt,
-      notes: "optimize-v2 using real miles (admin-managed vehicles enabled)",
+      notes: "optimize-v2 using real miles (admin-managed vehicles enabled + shift start support)",
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
