@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 type VehicleType =
   | "van_only"
@@ -16,6 +16,13 @@ export default function VehiclesManager() {
     shiftStart: "",
     shiftEnd: "",
   });
+  const [now, setNow] = useState(new Date());
+
+  // ⏱ Auto-refresh current time every 60 seconds
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleChange = (e: any) =>
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -37,11 +44,14 @@ export default function VehiclesManager() {
 
   const syncWithBackend = async () => {
     try {
-      const res = await fetch("https://srd-poc-backend.vercel.app/api/vehicles/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vehicles }),
-      });
+      const res = await fetch(
+        "https://srd-poc-backend.vercel.app/api/vehicles/update",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vehicles }),
+        }
+      );
 
       if (res.ok) {
         alert("✅ Vehicles synced to backend successfully");
@@ -52,6 +62,21 @@ export default function VehiclesManager() {
       console.error(err);
       alert("❌ Error communicating with backend");
     }
+  };
+
+  const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
+    if (!shiftStart || !shiftEnd) return "⚪ No shift set";
+
+    const start = new Date(shiftStart);
+    const end = new Date(shiftEnd);
+
+    if (now < start) {
+      const diff = (start.getTime() - now.getTime()) / 3600000;
+      if (diff <= 1) return "🟡 Starting soon";
+      return "🔒 Not started yet";
+    }
+    if (now > end) return "⚫ Shift ended";
+    return "🟢 Active now";
   };
 
   return (
@@ -103,37 +128,3 @@ export default function VehiclesManager() {
         <button onClick={addVehicle} style={{ marginLeft: "10px" }}>
           Add
         </button>
-      </section>
-
-      <h3>Vehicles on Shift</h3>
-      <table border={1} cellPadding={6}>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Type</th>
-            <th>Start Postcode</th>
-            <th>Shift Start</th>
-            <th>Shift End</th>
-          </tr>
-        </thead>
-        <tbody>
-          {vehicles.map((v) => (
-            <tr key={v.id}>
-              <td>{v.id}</td>
-              <td>{v.type}</td>
-              <td>{v.postcode}</td>
-              <td>{new Date(v.shiftStart).toLocaleString()}</td>
-              <td>{new Date(v.shiftEnd).toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {vehicles.length > 0 && (
-        <button onClick={syncWithBackend} style={{ marginTop: "2rem" }}>
-          🔄 Sync Vehicles to Optimizer
-        </button>
-      )}
-    </main>
-  );
-}
