@@ -93,8 +93,35 @@ export default function VehiclesManager() {
     }
   };
 
+  // 🧹 Clear all vehicles via API
+  const clearVehicles = async () => {
+    if (!confirm("Are you sure you want to clear ALL vehicles?")) return;
+    try {
+      const res = await fetch(
+        "https://srd-poc-backend.vercel.app/api/vehicles/clear",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+
+      const data = await res.json();
+
+      if (res.ok) {
+        alert(data.message || "🧹 All vehicles cleared successfully!");
+        setVehicles([]); // Clear the table instantly
+      } else {
+        alert(data.error || "⚠️ Failed to clear vehicles.");
+      }
+    } catch (err) {
+      console.error("Clear failed:", err);
+      alert("❌ Error communicating with backend");
+    }
+  };
+
   const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
-    if (!shiftStart || !shiftEnd) return { label: "⚪ No shift set", color: "#eee" };
+    if (!shiftStart || !shiftEnd)
+      return { label: "⚪ No shift set", color: "#eee" };
     const start = new Date(shiftStart);
     const end = new Date(shiftEnd);
     if (now < start) {
@@ -239,20 +266,36 @@ export default function VehiclesManager() {
       </table>
 
       {vehicles.length > 0 && (
-        <button
-          onClick={syncWithBackend}
-          style={{
-            marginTop: "2rem",
-            background: "#28a745",
-            color: "white",
-            padding: "10px 20px",
-            borderRadius: "8px",
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          🔄 Sync Vehicles to Optimizer
-        </button>
+        <div style={{ marginTop: "2rem" }}>
+          <button
+            onClick={syncWithBackend}
+            style={{
+              background: "#28a745",
+              color: "white",
+              padding: "10px 20px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              marginRight: "1rem",
+            }}
+          >
+            🔄 Sync Vehicles to Optimizer
+          </button>
+
+          <button
+            onClick={clearVehicles}
+            style={{
+              background: "#dc3545",
+              color: "white",
+              padding: "10px 20px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            🧹 Clear All Vehicles
+          </button>
+        </div>
       )}
     </main>
   );
