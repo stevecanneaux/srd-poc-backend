@@ -17,10 +17,38 @@ export default function VehiclesManager() {
     shiftEnd: "",
   });
   const [now, setNow] = useState(new Date());
+  const [loading, setLoading] = useState(false);
 
-  // ⏱ Auto-refresh every 60 seconds
+  // 🕒 Update current time every 60s
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // 📡 Fetch vehicles from backend
+  const fetchVehicles = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        "https://srd-poc-backend.vercel.app/api/vehicles/list"
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setVehicles(data.vehicles || []);
+      } else {
+        console.error("Failed to fetch vehicles", await res.text());
+      }
+    } catch (err) {
+      console.error("Backend unreachable:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔁 Auto-refresh every 30 seconds
+  useEffect(() => {
+    fetchVehicles();
+    const interval = setInterval(fetchVehicles, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -55,6 +83,7 @@ export default function VehiclesManager() {
 
       if (res.ok) {
         alert("✅ Vehicles synced to backend successfully");
+        fetchVehicles(); // Refresh live view
       } else {
         alert("⚠️ Failed to sync with backend");
       }
@@ -64,13 +93,10 @@ export default function VehiclesManager() {
     }
   };
 
-  // Determine shift status
   const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
     if (!shiftStart || !shiftEnd) return { label: "⚪ No shift set", color: "#eee" };
-
     const start = new Date(shiftStart);
     const end = new Date(shiftEnd);
-
     if (now < start) {
       const diff = (start.getTime() - now.getTime()) / 3600000;
       if (diff <= 1) return { label: "🟡 Starting soon", color: "#fff8d6" };
@@ -82,13 +108,13 @@ export default function VehiclesManager() {
 
   return (
     <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      {/* CSS animation for active vehicles */}
+      {/* CSS pulse effect for active vehicles */}
       <style>
         {`
           @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.4); }
-            70% { box-shadow: 0 0 15px 10px rgba(0, 255, 0, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(0,255,0,0.4); }
+            70% { box-shadow: 0 0 15px 10px rgba(0,255,0,0); }
+            100% { box-shadow: 0 0 0 0 rgba(0,255,0,0); }
           }
           .pulse {
             animation: pulse 2s infinite;
@@ -96,9 +122,10 @@ export default function VehiclesManager() {
         `}
       </style>
 
-      <h1 style={{ marginBottom: "1.5rem" }}>🚚 Vehicles Manager</h1>
+      <h1>🚚 Vehicles Manager</h1>
+      {loading && <p>⏳ Updating vehicle list...</p>}
 
-      {/* Add vehicle form */}
+      {/* Add new vehicle */}
       <section
         style={{
           marginBottom: "2rem",
@@ -165,7 +192,7 @@ export default function VehiclesManager() {
         </button>
       </section>
 
-      {/* Vehicle table */}
+      {/* Live vehicle list */}
       <h3>Vehicles on Shift</h3>
       <table
         border={1}
