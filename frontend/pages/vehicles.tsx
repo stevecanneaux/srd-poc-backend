@@ -65,25 +65,34 @@ export default function VehiclesManager() {
   };
 
   const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
-    if (!shiftStart || !shiftEnd) return "⚪ No shift set";
+    if (!shiftStart || !shiftEnd) return { label: "⚪ No shift set", color: "#eee" };
 
     const start = new Date(shiftStart);
     const end = new Date(shiftEnd);
 
     if (now < start) {
       const diff = (start.getTime() - now.getTime()) / 3600000;
-      if (diff <= 1) return "🟡 Starting soon";
-      return "🔒 Not started yet";
+      if (diff <= 1) return { label: "🟡 Starting soon", color: "#fff8d6" };
+      return { label: "🔒 Not started yet", color: "#f0f0f0" };
     }
-    if (now > end) return "⚫ Shift ended";
-    return "🟢 Active now";
+    if (now > end) return { label: "⚫ Shift ended", color: "#ddd" };
+    return { label: "🟢 Active now", color: "#d6f5d6" };
   };
 
   return (
     <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      <h1>🚚 Vehicles Manager</h1>
+      <h1 style={{ marginBottom: "1.5rem" }}>🚚 Vehicles Manager</h1>
 
-      <section style={{ marginBottom: "2rem" }}>
+      {/* Vehicle input form */}
+      <section
+        style={{
+          marginBottom: "2rem",
+          padding: "1rem",
+          background: "#f8f9fa",
+          borderRadius: "10px",
+          border: "1px solid #ccc",
+        }}
+      >
         <h3>Add Vehicle</h3>
         <input
           type="text"
@@ -125,6 +134,77 @@ export default function VehiclesManager() {
           onChange={handleChange}
           style={{ marginLeft: "10px" }}
         />
-        <button onClick={addVehicle} style={{ marginLeft: "10px" }}>
-          Add
+        <button
+          onClick={addVehicle}
+          style={{
+            marginLeft: "10px",
+            background: "#0070f3",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            padding: "5px 10px",
+            cursor: "pointer",
+          }}
+        >
+          ➕ Add
         </button>
+      </section>
+
+      {/* Vehicle table */}
+      <h3>Vehicles on Shift</h3>
+      <table
+        border={1}
+        cellPadding={6}
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          border: "1px solid #ddd",
+          fontSize: "0.95rem",
+        }}
+      >
+        <thead>
+          <tr style={{ backgroundColor: "#f0f0f0", textAlign: "left" }}>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Start Postcode</th>
+            <th>Shift Start</th>
+            <th>Shift End</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {vehicles.map((v) => {
+            const status = getShiftStatus(v.shiftStart, v.shiftEnd);
+            return (
+              <tr key={v.id} style={{ backgroundColor: status.color }}>
+                <td>{v.id}</td>
+                <td>{v.type}</td>
+                <td>{v.postcode}</td>
+                <td>{new Date(v.shiftStart).toLocaleString()}</td>
+                <td>{new Date(v.shiftEnd).toLocaleString()}</td>
+                <td>{status.label}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {vehicles.length > 0 && (
+        <button
+          onClick={syncWithBackend}
+          style={{
+            marginTop: "2rem",
+            background: "#28a745",
+            color: "white",
+            padding: "10px 20px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          🔄 Sync Vehicles to Optimizer
+        </button>
+      )}
+    </main>
+  );
+}
