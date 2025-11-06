@@ -1,3 +1,0 @@
-{
-  "vehicles": [ { "id": "V1", "type": "van_only", "postcode": "SW3", "shiftStart": "...", "shiftEnd": "..." } ]
-}
