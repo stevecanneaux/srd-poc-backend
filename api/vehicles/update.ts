@@ -1,11 +1,14 @@
 // api/vehicles/update.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import fs from "fs";
-import path from "path";
+import { Redis } from "@upstash/redis";
 
-const filePath = path.join("/tmp", "vehicles.json");
+// ✅ Connect to Upstash Redis using Vercel env vars
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
-// ✅ Enable CORS
+// ✅ CORS setup
 function setCORS(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -24,8 +27,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Invalid vehicle data" });
     }
 
-    // Write vehicles to file (Vercel allows /tmp)
-    fs.writeFileSync(filePath, JSON.stringify(vehicles, null, 2));
+    // ✅ Save vehicles list to Redis
+    await redis.set("vehicles:list", vehicles);
 
     console.log(`🚚 Updated vehicles list (${vehicles.length} total)`);
 
