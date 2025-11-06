@@ -18,7 +18,7 @@ export default function VehiclesManager() {
   });
   const [now, setNow] = useState(new Date());
 
-  // ⏱ Auto-refresh current time every 60 seconds
+  // ⏱ Auto-refresh every 60 seconds
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
@@ -64,6 +64,7 @@ export default function VehiclesManager() {
     }
   };
 
+  // Determine shift status
   const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
     if (!shiftStart || !shiftEnd) return { label: "⚪ No shift set", color: "#eee" };
 
@@ -76,14 +77,28 @@ export default function VehiclesManager() {
       return { label: "🔒 Not started yet", color: "#f0f0f0" };
     }
     if (now > end) return { label: "⚫ Shift ended", color: "#ddd" };
-    return { label: "🟢 Active now", color: "#d6f5d6" };
+    return { label: "🟢 Active now", color: "#d6f5d6", active: true };
   };
 
   return (
     <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+      {/* CSS animation for active vehicles */}
+      <style>
+        {`
+          @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.4); }
+            70% { box-shadow: 0 0 15px 10px rgba(0, 255, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
+          }
+          .pulse {
+            animation: pulse 2s infinite;
+          }
+        `}
+      </style>
+
       <h1 style={{ marginBottom: "1.5rem" }}>🚚 Vehicles Manager</h1>
 
-      {/* Vehicle input form */}
+      {/* Add vehicle form */}
       <section
         style={{
           marginBottom: "2rem",
@@ -176,7 +191,14 @@ export default function VehiclesManager() {
           {vehicles.map((v) => {
             const status = getShiftStatus(v.shiftStart, v.shiftEnd);
             return (
-              <tr key={v.id} style={{ backgroundColor: status.color }}>
+              <tr
+                key={v.id}
+                className={status.active ? "pulse" : ""}
+                style={{
+                  backgroundColor: status.color,
+                  transition: "background-color 0.3s ease",
+                }}
+              >
                 <td>{v.id}</td>
                 <td>{v.type}</td>
                 <td>{v.postcode}</td>
