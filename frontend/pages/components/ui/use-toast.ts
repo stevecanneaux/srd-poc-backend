@@ -1,56 +1,71 @@
 import * as React from "react";
-import { ToastProvider, Toast, ToastViewport } from "@/components/ui/toast";
 
-const TOAST_LIMIT = 3;
-const TOAST_REMOVE_DELAY = 1000000;
+export type ToastVariant = "default" | "destructive" | "success" | "warning";
 
-type ToasterToast = {
+export interface Toast {
   id: string;
   title?: string;
   description?: string;
-};
-
-const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-
-const listeners = new Set<(toast: ToasterToast[]) => void>();
-let memoryState: ToasterToast[] = [];
-
-function toast(toast: ToasterToast) {
-  memoryState = [...memoryState, toast].slice(-TOAST_LIMIT);
-  listeners.forEach((listener) => listener(memoryState));
-
-  const timeout = setTimeout(() => {
-    dismiss(toast.id);
-  }, TOAST_REMOVE_DELAY);
-
-  toastTimeouts.set(toast.id, timeout);
-
-  return toast.id;
+  variant?: ToastVariant;
 }
 
-function dismiss(toastId: string) {
-  memoryState = memoryState.filter((t) => t.id !== toastId);
-  listeners.forEach((listener) => listener(memoryState));
-
-  const timeout = toastTimeouts.get(toastId);
-  if (timeout) clearTimeout(timeout);
+interface ToastContextType {
+  toasts: Toast[];
+  toast: (toast: Omit<Toast, "id">) => void;
+  dismiss: (id: string) => void;
 }
 
-function useToast() {
-  const [toasts, setToasts] = React.useState<ToasterToast[]>(memoryState);
+const ToastCtx = React.createContext<ToastContextType | null>(null);
 
-  React.useEffect(() => {
-    listeners.add(setToasts);
-    return () => {
-      listeners.delete(setToasts);
-    };
-  }, [toasts]);
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, setToasts] = React.useState<Toast[]>([]);
 
-  return {
-    toast,
-    dismiss,
-    toasts,
+  // Show a new toast
+  const toast = (t: Omit<Toast, "id">) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { ...t, id }]);
+    setTimeout(() => dismiss(id), 4000);
   };
+
+  // Remove a toast
+  const dismiss = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  return (
+    <React.Fragment>
+      <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
+        {children}
+      </ToastCtx.Provider>
+
+      {/* Toast container */}
+      <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`px-4 py-3 rounded-lg text-white shadow-md transition-all ${
+              t.variant === "destructive"
+                ? "bg-red-600"
+                : t.variant === "success"
+                ? "bg-green-600"
+                : t.variant === "warning"
+                ? "bg-yellow-500 text-black"
+                : "bg-gray-800"
+            }`}
+          >
+            {t.title && <strong>{t.title}</strong>}
+            {t.description && <div className="text-sm">{t.description}</div>}
+          </div>
+        ))}
+      </div>
+    </React.Fragment>
+  );
 }
 
-export { useToast, ToastProvider, ToastViewport, Toast };
+export function useToast() {
+  const ctx = React.useContext(ToastCtx);
+  if (!ctx) {
+    throw new Error("useToast must be used inside a <ToastProvider>");
+  }
+  return ctx;
+}
