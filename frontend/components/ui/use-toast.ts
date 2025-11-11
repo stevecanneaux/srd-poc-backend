@@ -1,5 +1,4 @@
-import * as React from "react";
-import { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode } from "react";
 
 export type ToastVariant = "default" | "destructive" | "success" | "warning";
 
@@ -10,13 +9,13 @@ export interface Toast {
   variant?: ToastVariant;
 }
 
-interface ToastContextValue {
+interface ToastContextType {
   toasts: Toast[];
   toast: (toast: Omit<Toast, "id">) => void;
   dismiss: (id: string) => void;
 }
 
-const ToastContext = createContext<ToastContextValue | undefined>(undefined);
+const ToastCtx = createContext<ToastContextType | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -32,13 +31,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ToastContext.Provider value={{ toasts, toast, dismiss }}>
+    <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
       {children}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`px-4 py-3 rounded-lg text-white shadow-md ${
+            className={`px-4 py-3 rounded-lg text-white shadow-md transition-all ${
               t.variant === "destructive"
                 ? "bg-red-600"
                 : t.variant === "success"
@@ -53,12 +52,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           </div>
         ))}
       </div>
-    </ToastContext.Provider>
+    </ToastCtx.Provider>
   );
 }
 
 export function useToast() {
-  const context = useContext(ToastContext);
-  if (!context) throw new Error("useToast must be used within a ToastProvider");
-  return context;
+  const ctx = useContext(ToastCtx);
+  if (!ctx) {
+    throw new Error("useToast must be used inside a <ToastProvider>");
+  }
+  return ctx;
 }
