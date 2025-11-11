@@ -1,14 +1,28 @@
 import React, { useState, useEffect } from "react";
-
-type VehicleType =
-  | "van_only"
-  | "van_tow"
-  | "small_ramp"
-  | "hiab_grabber"
-  | "lorry_recovery";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
+import { Trash2, Edit2, RefreshCcw, Search } from "lucide-react";
 
 export default function VehiclesManager() {
+  const { toast } = useToast();
   const [vehicles, setVehicles] = useState<any[]>([]);
+  const [filteredVehicles, setFilteredVehicles] = useState<any[]>([]);
+  const [search, setSearch] = useState("");
   const [form, setForm] = useState({
     id: "",
     type: "van_only",
@@ -16,287 +30,185 @@ export default function VehiclesManager() {
     shiftStart: "",
     shiftEnd: "",
   });
-  const [now, setNow] = useState(new Date());
+  const [editing, setEditing] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 🕒 Update current time every 60s
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // 📡 Fetch vehicles from backend
+  // Fetch vehicles from backend
   const fetchVehicles = async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        "https://srd-poc-backend.vercel.app/api/vehicles/list"
-      );
+      const res = await fetch("https://srd-poc-backend.vercel.app/api/vehicles/list");
       if (res.ok) {
         const data = await res.json();
         setVehicles(data.vehicles || []);
-      } else {
-        console.error("Failed to fetch vehicles", await res.text());
+        setFilteredVehicles(data.vehicles || []);
       }
     } catch (err) {
-      console.error("Backend unreachable:", err);
+      toast({ title: "Backend unreachable", description: `${err}` });
     } finally {
       setLoading(false);
     }
   };
 
-  // 🔁 Auto-refresh every 30 seconds
   useEffect(() => {
     fetchVehicles();
-    const interval = setInterval(fetchVehicles, 30000);
-    return () => clearInterval(interval);
   }, []);
 
-  const handleChange = (e: any) =>
-    setForm({ ...form, [e.target.name]: e.target.value });
+  // Filter vehicles by search
+  useEffect(() => {
+    setFilteredVehicles(
+      vehicles.filter((v) =>
+        v.id.toLowerCase().includes(search.toLowerCase()) ||
+        v.postcode.toLowerCase().includes(search.toLowerCase())
+      )
+    );
+  }, [search, vehicles]);
 
-  const addVehicle = () => {
+  // Add or update vehicle
+  const saveVehicle = () => {
     if (!form.id || !form.postcode || !form.shiftStart || !form.shiftEnd) {
-      alert("Please fill in all fields");
+      toast({ title: "Missing fields", description: "Please fill in all fields" });
       return;
     }
-    setVehicles([...vehicles, form]);
-    setForm({
-      id: "",
-      type: "van_only",
-      postcode: "",
-      shiftStart: "",
-      shiftEnd: "",
-    });
-  };
 
-  const syncWithBackend = async () => {
-    try {
-      const res = await fetch(
-        "https://srd-poc-backend.vercel.app/api/vehicles/update",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vehicles }),
-        }
+    if (editing) {
+      setVehicles(
+        vehicles.map((v) => (v.id === editing.id ? { ...form } : v))
       );
+      toast({ title: "Vehicle updated", description: `${form.id} has been updated.` });
+      setEditing(null);
+    } else {
+      setVehicles([...vehicles, form]);
+      toast({ title: "Vehicle added", description: `${form.id} added successfully.` });
+    }
 
-      if (res.ok) {
-        alert("✅ Vehicles synced to backend successfully");
-        fetchVehicles(); // Refresh live view
-      } else {
-        alert("⚠️ Failed to sync with backend");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("❌ Error communicating with backend");
+    setForm({ id: "", type: "van_only", postcode: "", shiftStart: "", shiftEnd: "" });
+  };
+
+  // Edit existing vehicle
+  const handleEdit = (vehicle: any) => {
+    setEditing(vehicle);
+    setForm(vehicle);
+  };
+
+  // Remove a vehicle
+  const handleRemove = (id: string) => {
+    if (confirm(`Remove vehicle ${id}?`)) {
+      setVehicles(vehicles.filter((v) => v.id !== id));
+      toast({ title: "Vehicle removed", description: `${id} has been removed.` });
     }
   };
 
-  // 🧹 Clear all vehicles via API
-  const clearVehicles = async () => {
-    if (!confirm("Are you sure you want to clear ALL vehicles?")) return;
+  // Clear all vehicles
+  const clearAll = async () => {
+    if (!confirm("Are you sure you want to clear all vehicles?")) return;
     try {
-      const res = await fetch(
-        "https://srd-poc-backend.vercel.app/api/vehicles/clear",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-
-      const data = await res.json();
-
+      const res = await fetch("https://srd-poc-backend.vercel.app/api/vehicles/clear", {
+        method: "POST",
+      });
       if (res.ok) {
-        alert(data.message || "🧹 All vehicles cleared successfully!");
-        setVehicles([]); // Clear the table instantly
+        setVehicles([]);
+        setFilteredVehicles([]);
+        toast({ title: "All vehicles cleared" });
       } else {
-        alert(data.error || "⚠️ Failed to clear vehicles.");
+        toast({ title: "Failed to clear vehicles" });
       }
-    } catch (err) {
-      console.error("Clear failed:", err);
-      alert("❌ Error communicating with backend");
+    } catch {
+      toast({ title: "Error", description: "Could not contact backend." });
     }
-  };
-
-  const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
-    if (!shiftStart || !shiftEnd)
-      return { label: "⚪ No shift set", color: "#eee" };
-    const start = new Date(shiftStart);
-    const end = new Date(shiftEnd);
-    if (now < start) {
-      const diff = (start.getTime() - now.getTime()) / 3600000;
-      if (diff <= 1) return { label: "🟡 Starting soon", color: "#fff8d6" };
-      return { label: "🔒 Not started yet", color: "#f0f0f0" };
-    }
-    if (now > end) return { label: "⚫ Shift ended", color: "#ddd" };
-    return { label: "🟢 Active now", color: "#d6f5d6", active: true };
   };
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      {/* CSS pulse effect for active vehicles */}
-      <style>
-        {`
-          @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(0,255,0,0.4); }
-            70% { box-shadow: 0 0 15px 10px rgba(0,255,0,0); }
-            100% { box-shadow: 0 0 0 0 rgba(0,255,0,0); }
-          }
-          .pulse {
-            animation: pulse 2s infinite;
-          }
-        `}
-      </style>
+    <div className="p-6 space-y-6">
+      <Card>
+        <CardHeader className="flex justify-between items-center">
+          <CardTitle className="text-xl font-semibold">🚚 Vehicles Manager</CardTitle>
+          <div className="flex gap-2">
+            <Button onClick={fetchVehicles} variant="outline" disabled={loading}>
+              <RefreshCcw className="w-4 h-4 mr-2" /> Refresh
+            </Button>
+            <Button onClick={clearAll} variant="destructive">
+              <Trash2 className="w-4 h-4 mr-2" /> Clear All
+            </Button>
+          </div>
+        </CardHeader>
 
-      <h1>🚚 Vehicles Manager</h1>
-      {loading && <p>⏳ Updating vehicle list...</p>}
+        <CardContent className="space-y-4">
+          {/* Search */}
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-gray-500" />
+            <Input
+              placeholder="Search by ID or Postcode"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
 
-      {/* Add new vehicle */}
-      <section
-        style={{
-          marginBottom: "2rem",
-          padding: "1rem",
-          background: "#f8f9fa",
-          borderRadius: "10px",
-          border: "1px solid #ccc",
-        }}
-      >
-        <h3>Add Vehicle</h3>
-        <input
-          type="text"
-          name="id"
-          value={form.id}
-          onChange={handleChange}
-          placeholder="Vehicle ID"
-          style={{ marginRight: "10px" }}
-        />
-        <select name="type" value={form.type} onChange={handleChange}>
-          <option value="van_only">Van Only</option>
-          <option value="van_tow">Van Tow</option>
-          <option value="small_ramp">Small Ramp</option>
-          <option value="hiab_grabber">HIAB Grabber</option>
-          <option value="lorry_recovery">Lorry Recovery</option>
-        </select>
-        <input
-          type="text"
-          name="postcode"
-          value={form.postcode}
-          onChange={handleChange}
-          placeholder="Start Postcode"
-          style={{ marginLeft: "10px", marginRight: "10px" }}
-        />
-        <br />
-        <label>Shift Start:</label>
-        <input
-          type="datetime-local"
-          name="shiftStart"
-          value={form.shiftStart}
-          onChange={handleChange}
-          style={{ marginLeft: "10px", marginRight: "10px" }}
-        />
-        <label>Shift End:</label>
-        <input
-          type="datetime-local"
-          name="shiftEnd"
-          value={form.shiftEnd}
-          onChange={handleChange}
-          style={{ marginLeft: "10px" }}
-        />
-        <button
-          onClick={addVehicle}
-          style={{
-            marginLeft: "10px",
-            background: "#0070f3",
-            color: "white",
-            border: "none",
-            borderRadius: "6px",
-            padding: "5px 10px",
-            cursor: "pointer",
-          }}
-        >
-          ➕ Add
-        </button>
-      </section>
+          {/* Add / Edit form */}
+          <div className="grid md:grid-cols-5 gap-2">
+            <Input name="id" placeholder="Vehicle ID" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} />
+            <Select value={form.type} onValueChange={(val) => setForm({ ...form, type: val })}>
+              <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="van_only">Van Only</SelectItem>
+                <SelectItem value="van_tow">Van Tow</SelectItem>
+                <SelectItem value="small_ramp">Small Ramp</SelectItem>
+                <SelectItem value="hiab_grabber">HIAB Grabber</SelectItem>
+                <SelectItem value="lorry_recovery">Lorry Recovery</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input name="postcode" placeholder="Postcode" value={form.postcode} onChange={(e) => setForm({ ...form, postcode: e.target.value })} />
+            <Input type="datetime-local" name="shiftStart" value={form.shiftStart} onChange={(e) => setForm({ ...form, shiftStart: e.target.value })} />
+            <Input type="datetime-local" name="shiftEnd" value={form.shiftEnd} onChange={(e) => setForm({ ...form, shiftEnd: e.target.value })} />
+          </div>
 
-      {/* Live vehicle list */}
-      <h3>Vehicles on Shift</h3>
-      <table
-        border={1}
-        cellPadding={6}
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          border: "1px solid #ddd",
-          fontSize: "0.95rem",
-        }}
-      >
-        <thead>
-          <tr style={{ backgroundColor: "#f0f0f0", textAlign: "left" }}>
-            <th>ID</th>
-            <th>Type</th>
-            <th>Start Postcode</th>
-            <th>Shift Start</th>
-            <th>Shift End</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {vehicles.map((v) => {
-            const status = getShiftStatus(v.shiftStart, v.shiftEnd);
-            return (
-              <tr
-                key={v.id}
-                className={status.active ? "pulse" : ""}
-                style={{
-                  backgroundColor: status.color,
-                  transition: "background-color 0.3s ease",
-                }}
-              >
-                <td>{v.id}</td>
-                <td>{v.type}</td>
-                <td>{v.postcode}</td>
-                <td>{new Date(v.shiftStart).toLocaleString()}</td>
-                <td>{new Date(v.shiftEnd).toLocaleString()}</td>
-                <td>{status.label}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+          <Button className="w-full md:w-auto" onClick={saveVehicle}>
+            {editing ? "💾 Save Changes" : "➕ Add Vehicle"}
+          </Button>
 
-      {vehicles.length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <button
-            onClick={syncWithBackend}
-            style={{
-              background: "#28a745",
-              color: "white",
-              padding: "10px 20px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              marginRight: "1rem",
-            }}
-          >
-            🔄 Sync Vehicles to Optimizer
-          </button>
-
-          <button
-            onClick={clearVehicles}
-            style={{
-              background: "#dc3545",
-              color: "white",
-              padding: "10px 20px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            🧹 Clear All Vehicles
-          </button>
-        </div>
-      )}
-    </main>
+          {/* Vehicles Table */}
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="text-left p-2">ID</th>
+                  <th className="text-left p-2">Type</th>
+                  <th className="text-left p-2">Postcode</th>
+                  <th className="text-left p-2">Shift Start</th>
+                  <th className="text-left p-2">Shift End</th>
+                  <th className="text-left p-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredVehicles.map((v) => (
+                  <tr key={v.id} className="border-t hover:bg-gray-50">
+                    <td className="p-2">{v.id}</td>
+                    <td className="p-2">{v.type}</td>
+                    <td className="p-2">{v.postcode}</td>
+                    <td className="p-2">{new Date(v.shiftStart).toLocaleString()}</td>
+                    <td className="p-2">{new Date(v.shiftEnd).toLocaleString()}</td>
+                    <td className="p-2 flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleEdit(v)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => handleRemove(v.id)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {filteredVehicles.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center p-4 text-gray-500">
+                      No vehicles found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
