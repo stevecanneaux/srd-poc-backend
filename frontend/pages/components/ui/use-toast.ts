@@ -15,33 +15,30 @@ interface ToastContextType {
   dismiss: (id: string) => void;
 }
 
-// Create a React context to hold toasts
 const ToastCtx = React.createContext<ToastContextType | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
 
-  // ✅ Trigger a new toast
+  // ✅ Add new toast
   const toast = (t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { ...t, id }]);
-    // Auto-dismiss after 4 seconds
     setTimeout(() => dismiss(id), 4000);
   };
 
-  // ✅ Remove a toast manually
+  // ✅ Remove toast
   const dismiss = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // ✅ Render
+  // ✅ Render component safely (no fragment shorthand)
   return (
     <React.Fragment>
       <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
         {children}
       </ToastCtx.Provider>
 
-      {/* Toast Container */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
         {toasts.map((t) => (
           <div
@@ -65,7 +62,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ✅ Hook for using the toast system
 export function useToast() {
   const ctx = React.useContext(ToastCtx);
   if (!ctx) {
