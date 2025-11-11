@@ -11,13 +11,19 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve",
 
-    /* ✅ Added below: Base URL + Path Alias */
+    /* ✅ Key Fix: Let TS understand <> fragments and JSX syntax */
+    "jsx": "react-jsx",
+
+    /* ✅ Base URL + Path Aliases for "@/..." imports */
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
-    }
+    },
+
+    /* Optional quality-of-life flags */
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
