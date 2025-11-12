@@ -32,7 +32,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Render the toast provider and container
+  // Render without any fragments (Next.js safe)
   return (
     <div>
       <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
