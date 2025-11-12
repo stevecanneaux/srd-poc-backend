@@ -1,6 +1,5 @@
 // /frontend/pages/api/dispatch-proxy.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import fetch from "node-fetch";
 
 // Your backend optimizer endpoint
 const OPTIMIZE_URL = "https://srd-poc-backend.vercel.app/api/optimize-v2";
