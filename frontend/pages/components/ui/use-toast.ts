@@ -20,25 +20,26 @@ const ToastCtx = React.createContext<ToastContextType | null>(null);
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
 
-  // ✅ Add new toast
+  // Add a new toast
   const toast = (t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { ...t, id }]);
     setTimeout(() => dismiss(id), 4000);
   };
 
-  // ✅ Remove toast
+  // Remove a toast
   const dismiss = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // ✅ Render component safely (no fragment shorthand)
+  // Render the toast provider and container
   return (
-    <React.Fragment>
+    <div>
       <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
         {children}
       </ToastCtx.Provider>
 
+      {/* Toast container */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
         {toasts.map((t) => (
           <div
@@ -58,7 +59,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           </div>
         ))}
       </div>
-    </React.Fragment>
+    </div>
   );
 }
 
