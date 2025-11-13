@@ -15,7 +15,7 @@ type Vehicle = {
   id: string;
   type: VehicleType;
   location: Coord;
-  shiftStart?: string; // ✅ Added
+  shiftStart?: string;
   shiftEnd: string;
   capabilities?: string[];
   allowOvertime?: boolean;
@@ -70,7 +70,6 @@ type AssignmentV2 = {
 
 // -------------------- helpers --------------------
 
-// ✅ CORS helper for frontend communication
 function setCORS(res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -137,26 +136,16 @@ function logDebug(...args: any[]) {
 // -------------------- main handler --------------------
 
 export default async function handler(req: any, res: any) {
-  // ✅ Enable CORS for all requests
   setCORS(res);
-  if (req.method === "OPTIONS") {
-    return res.status(200).end(); // Handle CORS preflight
-  }
-
-  if (req.method !== "POST")
-    return res.status(405).json({ error: "Method Not Allowed" });
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
     const body = typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
     const now = body?.now ? new Date(body.now) : new Date();
 
-    // ✅ Merge live vehicles with admin-added ones
     const manualVehicles: Vehicle[] = (globalThis as any).pendingVehicles ?? [];
-    const vehicles: Vehicle[] = [
-      ...(body?.vehicles ?? []),
-      ...manualVehicles,
-    ];
-
+    const vehicles: Vehicle[] = [...(body?.vehicles ?? []), ...manualVehicles];
     const jobs: JobV2[] = body?.jobs ?? [];
     const garages: Garage[] = body?.garages ?? [];
     const policies: PoliciesV2 = {
@@ -175,10 +164,9 @@ export default async function handler(req: any, res: any) {
     const assignments: AssignmentV2[] = [];
     const unassigned: string[] = [];
 
-    logDebug(`Starting optimization run at ${now.toISOString()}`);
-    logDebug(`Jobs: ${jobs.length}, Vehicles: ${vehicles.length} (includes admin-added)`);
+    logDebug(`Starting optimization at ${now.toISOString()}`);
+    logDebug(`Jobs: ${jobs.length}, Vehicles: ${vehicles.length}`);
 
-    // -------------------- optimization loop --------------------
     for (const job of jobs) {
       await new Promise((r) => setTimeout(r, 25));
 
@@ -228,29 +216,22 @@ export default async function handler(req: any, res: any) {
       let best: AssignmentV2 | null = null;
 
       for (const v of eligible) {
-        // ✅ New: respect shift start times
         const shiftStart = new Date(v.shiftStart || now);
         const shiftEnd = new Date(v.shiftEnd);
         const minsLeft = (shiftEnd.getTime() - now.getTime()) / 60000;
 
-        if (now < shiftStart) {
-          logDebug(`Skipping ${v.id} — shift not started (${shiftStart.toISOString()})`);
-          continue;
-        }
-
-        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) {
-          logDebug(`Skipping ${v.id} — shift ending soon (${shiftEnd.toISOString()})`);
-          continue;
-        }
+        if (now < shiftStart) continue;
+        if (minsLeft <= (policies.noNewJobLastMinutes ?? 60) && !v.allowOvertime) continue;
 
         const m1 = await matrix(req, [v.location], [job.pickup]);
-        const leg1Min = m1.minutes[0][0];
-        const leg1Miles = m1.miles[0][0];
-        if (leg1Miles > (policies.maxLegMiles ?? 30)) continue;
+        const leg1Min = m1.minutes?.[0]?.[0] ?? 9999;
+        const leg1Miles = m1.miles?.[0]?.[0] ?? 9999;
+        if (!isFinite(leg1Miles) || leg1Miles > (policies.maxLegMiles ?? 30)) continue;
 
         const m2 = await matrix(req, [job.pickup], [drop!]);
-        const leg2Min = m2.minutes[0][0];
-        const leg2Miles = m2.miles[0][0];
+        const leg2Min = m2.minutes?.[0]?.[0] ?? 9999;
+        const leg2Miles = m2.miles?.[0]?.[0] ?? 9999;
+        if (!isFinite(leg2Miles) || leg2Miles > (policies.maxLegMiles ?? 30)) continue;
 
         const legs: RouteLeg[] = [
           { from: v.location, to: job.pickup, miles: leg1Miles, etaMinutes: leg1Min, vehicleId: v.id, note: "to pickup" },
@@ -273,32 +254,29 @@ export default async function handler(req: any, res: any) {
               : "Direct within per-leg miles limit.",
         };
 
-        if (!best || legs.reduce((a, l) => a + l.etaMinutes, 0) < best.legs.reduce((a, l) => a + l.etaMinutes, 0))
+        if (
+          !best ||
+          legs.reduce((a, l) => a + l.etaMinutes, 0) <
+            best.legs.reduce((a, l) => a + l.etaMinutes, 0)
+        ) {
           best = assign;
+        }
       }
 
-      if (best) {
-        assignments.push(best);
-        logDebug(`Job ${job.id} assigned (${best.reason})`);
-      } else {
-        unassigned.push(job.id);
-        logDebug(`Job ${job.id} could not be assigned`);
-      }
+      if (best) assignments.push(best);
+      else unassigned.push(job.id);
     }
 
-    // -------------------- ADMIN PROMPT BLOCK --------------------
     const missingVehicles = unassigned
       .map((jobId) => {
         const job = jobs.find((j) => j.id === jobId);
         if (!job) return null;
-
         const typeNeeded =
           job.issueType === "recovery_only"
             ? "hiab_grabber"
             : job.issueType === "repair_possible_recovery"
             ? "van_tow"
             : "van_only";
-
         return {
           jobId: job.id,
           vehicleType: typeNeeded,
@@ -313,13 +291,12 @@ export default async function handler(req: any, res: any) {
         ? `${missingVehicles.length} additional vehicle${missingVehicles.length > 1 ? "s" : ""} required to complete all jobs.`
         : "All jobs covered.";
 
-    // -------------------- respond --------------------
     res.status(200).json({
       assignments,
       unassigned,
       missingVehicles,
       adminPrompt,
-      notes: "optimize-v2 using real miles (admin-managed vehicles enabled + shift start support)",
+      notes: "optimize-v2 safe version (added validation for empty ETA arrays)",
     });
   } catch (e: any) {
     console.error("optimize-v2 error", e);
