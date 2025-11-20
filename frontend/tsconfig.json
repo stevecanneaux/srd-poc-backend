@@ -1,29 +1,26 @@
 {
   "compilerOptions": {
+    "target": "es5",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": false,
+    "forceConsistentCasingInFileNames": true,
     "noEmit": true,
-    "incremental": true,
-    "module": "esnext",
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "module": "esnext",
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
-
-    /* ✅ Key Fix: Let TS understand <> fragments and JSX syntax */
+    "incremental": true,
     "jsx": "react-jsx",
 
-    /* ✅ Base URL + Path Aliases for "@/..." imports */
+    /* ✅ Keep alias mapping (critical for "@/..." imports) */
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
-    },
-
-    /* Optional quality-of-life flags */
-    "forceConsistentCasingInFileNames": true,
-    "allowSyntheticDefaultImports": true
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
