@@ -1,4 +1,4 @@
-// /backend/api/vehicles/update.ts
+// /backend/api/jobs/update.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Redis } from "@upstash/redis";
 
@@ -22,24 +22,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
-    const { vehicles } = req.body;
+    const { jobs } = req.body;
 
-    if (!vehicles || !Array.isArray(vehicles)) {
-      return res.status(400).json({ error: "Invalid vehicle data" });
+    if (!jobs || !Array.isArray(jobs)) {
+      return res.status(400).json({ error: "Invalid job data" });
     }
 
-    // ✅ Save vehicles list to Redis
-    await redis.set("vehicles:list", vehicles);
+    // ✅ Save jobs list to Redis
+    await redis.set("jobs:list", jobs);
 
-    console.log(`🚚 Updated vehicles list (${vehicles.length} total)`);
+    console.log(`🧾 Updated jobs list (${jobs.length} total)`);
 
     res.status(200).json({
       success: true,
-      count: vehicles.length,
-      message: "Vehicles updated and saved successfully",
+      count: jobs.length,
+      message: "Jobs updated and saved successfully",
     });
   } catch (err: any) {
-    console.error("Vehicle update failed:", err);
+    console.error("Job update failed:", err);
     res.status(500).json({ error: "Internal Server Error", detail: err.message });
   }
 }

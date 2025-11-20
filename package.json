@@ -8,7 +8,13 @@
     "start": "echo \"serverless via vercel\""
   },
   "dependencies": {
+    "@vercel/node": "^2.15.10",
+    "@upstash/redis": "^1.25.0",
     "hono": "^4.4.7",
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
   }
 }

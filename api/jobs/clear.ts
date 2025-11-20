@@ -1,14 +1,14 @@
-// /backend/api/vehicles/update.ts
+// api/jobs/clear.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Redis } from "@upstash/redis";
 
-// ✅ Connect to Upstash Redis using current Vercel KV env vars
+// ✅ Connect to Upstash Redis using current Vercel KV environment variables
 const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-// ✅ CORS setup
+// ✅ Enable CORS
 function setCORS(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -22,24 +22,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
-    const { vehicles } = req.body;
+    // ✅ Delete the jobs key in Redis
+    await redis.del("jobs:list");
 
-    if (!vehicles || !Array.isArray(vehicles)) {
-      return res.status(400).json({ error: "Invalid vehicle data" });
-    }
-
-    // ✅ Save vehicles list to Redis
-    await redis.set("vehicles:list", vehicles);
-
-    console.log(`🚚 Updated vehicles list (${vehicles.length} total)`);
+    console.log("🧹 Cleared all stored jobs from Redis");
 
     res.status(200).json({
       success: true,
-      count: vehicles.length,
-      message: "Vehicles updated and saved successfully",
+      message: "All jobs cleared successfully",
     });
   } catch (err: any) {
-    console.error("Vehicle update failed:", err);
-    res.status(500).json({ error: "Internal Server Error", detail: err.message });
+    console.error("Job clear failed:", err);
+    res.status(500).json({
+      error: "Internal Server Error",
+      detail: err.message,
+    });
   }
 }

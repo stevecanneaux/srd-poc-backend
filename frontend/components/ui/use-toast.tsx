@@ -20,26 +20,21 @@ const ToastCtx = React.createContext<ToastContextType | null>(null);
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
 
-  // Add a new toast
   const toast = (t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { ...t, id }]);
     setTimeout(() => dismiss(id), 4000);
   };
 
-  // Remove a toast
   const dismiss = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Render without any fragments (Next.js safe)
   return (
-    <div>
+    <>
       <ToastCtx.Provider value={{ toasts, toast, dismiss }}>
         {children}
       </ToastCtx.Provider>
-
-      {/* Toast container */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
         {toasts.map((t) => (
           <div
@@ -54,12 +49,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 : "bg-gray-800"
             }`}
           >
-            {t.title && <strong>{t.title}</strong>}
+            <strong>{t.title}</strong>
             {t.description && <div className="text-sm">{t.description}</div>}
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 
