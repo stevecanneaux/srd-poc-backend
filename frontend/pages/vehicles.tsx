@@ -31,13 +31,11 @@ export default function VehiclesManager() {
 
   const API_BASE = "https://srd-poc-backend.vercel.app/api/vehicles";
 
-  // Update current time every 60s
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch vehicles from backend
   const fetchVehicles = async () => {
     setLoading(true);
     try {
@@ -135,7 +133,8 @@ export default function VehiclesManager() {
     await syncWithBackend(updated, "Vehicle updated successfully");
   };
 
-  const handleEditKey = (e: React.KeyboardEvent<HTMLInputElement>, id: string) => {
+  // ✅ Updated type definition here
+  const handleEditKey = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>, id: string) => {
     if (e.key === "Enter") saveEdit(id);
     if (e.key === "Escape") {
       setEditingId(null);
