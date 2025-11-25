@@ -42,5 +42,40 @@ const DialogContent = React.forwardRef<
 ));
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
-export { Dialog, DialogTrigger, DialogClose, DialogContent };
+// ✅ Add this header wrapper (fixes missing export)
+const DialogHeader = ({
+  children,
+  className,
+}: React.HTMLAttributes<HTMLDivElement>) => (
+  <div
+    className={cn(
+      "mb-4 border-b pb-2 text-lg font-semibold leading-none tracking-tight",
+      className
+    )}
+  >
+    {children}
+  </div>
+);
+DialogHeader.displayName = "DialogHeader";
 
+// Optional title/footer helpers if you use them
+const DialogTitle = DialogPrimitive.Title;
+const DialogFooter = ({
+  children,
+  className,
+}: React.HTMLAttributes<HTMLDivElement>) => (
+  <div className={cn("mt-4 flex justify-end space-x-2", className)}>
+    {children}
+  </div>
+);
+DialogFooter.displayName = "DialogFooter";
+
+export {
+  Dialog,
+  DialogTrigger,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+};
