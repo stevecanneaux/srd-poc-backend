@@ -6,7 +6,6 @@ const nextConfig = {
   output: "standalone",
   distDir: ".next",
   webpack: (config) => {
-    // Allow imports like "@/components/Button"
     config.resolve.alias["@"] = path.resolve(__dirname);
     return config;
   },
