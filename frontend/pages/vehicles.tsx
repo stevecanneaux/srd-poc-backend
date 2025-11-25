@@ -4,7 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 
-type VehicleType = "van_only" | "van_tow" | "small_ramp" | "hiab_grabber" | "lorry_recovery";
+type VehicleType =
+  | "van_only"
+  | "van_tow"
+  | "small_ramp"
+  | "hiab_grabber"
+  | "lorry_recovery";
 
 interface Vehicle {
   id: string;
@@ -31,11 +36,13 @@ export default function VehiclesManager() {
 
   const API_BASE = "https://srd-poc-backend.vercel.app/api/vehicles";
 
+  // Update time every minute
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch vehicles list
   const fetchVehicles = async () => {
     setLoading(true);
     try {
@@ -59,11 +66,17 @@ export default function VehiclesManager() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleChange = (e: any) => setForm({ ...form, [e.target.name]: e.target.value });
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
 
   const addVehicle = async () => {
     if (!form.id || !form.postcode || !form.shiftStart || !form.shiftEnd) {
-      toast({ title: "Missing fields", description: "Please fill in all fields.", variant: "destructive" });
+      toast({
+        title: "Missing fields",
+        description: "Please fill in all fields.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -83,13 +96,24 @@ export default function VehiclesManager() {
         body: JSON.stringify({ vehicles: updatedVehicles }),
       });
       if (res.ok) {
-        toast({ title: "Success", description: message || "Vehicles synced successfully" });
+        toast({
+          title: "Success",
+          description: message || "Vehicles synced successfully",
+        });
         fetchVehicles();
       } else {
-        toast({ title: "Sync failed", description: "Could not update backend", variant: "destructive" });
+        toast({
+          title: "Sync failed",
+          description: "Could not update backend",
+          variant: "destructive",
+        });
       }
     } catch (err) {
-      toast({ title: "Error", description: "Failed to connect to backend", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to connect to backend",
+        variant: "destructive",
+      });
     }
   };
 
@@ -99,12 +123,23 @@ export default function VehiclesManager() {
       const res = await fetch(`${API_BASE}/clear`, { method: "POST" });
       if (res.ok) {
         setVehicles([]);
-        toast({ title: "Cleared", description: "All vehicles removed successfully" });
+        toast({
+          title: "Cleared",
+          description: "All vehicles removed successfully",
+        });
       } else {
-        toast({ title: "Failed", description: "Could not clear vehicles", variant: "destructive" });
+        toast({
+          title: "Failed",
+          description: "Could not clear vehicles",
+          variant: "destructive",
+        });
       }
     } catch {
-      toast({ title: "Error", description: "Backend unreachable", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Backend unreachable",
+        variant: "destructive",
+      });
     }
   };
 
@@ -126,15 +161,19 @@ export default function VehiclesManager() {
   };
 
   const saveEdit = async (id: string) => {
-    const updated = vehicles.map((v) => (v.id === id ? { ...v, ...editValues } : v));
+    const updated = vehicles.map((v) =>
+      v.id === id ? { ...v, ...editValues } : v
+    );
     setVehicles(updated);
     setEditingId(null);
     setEditValues({});
     await syncWithBackend(updated, "Vehicle updated successfully");
   };
 
-  // ✅ Updated type definition here
-  const handleEditKey = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>, id: string) => {
+  const handleEditKey = (
+    e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+    id: string
+  ) => {
     if (e.key === "Enter") saveEdit(id);
     if (e.key === "Escape") {
       setEditingId(null);
@@ -143,7 +182,8 @@ export default function VehiclesManager() {
   };
 
   const getShiftStatus = (shiftStart: string, shiftEnd: string) => {
-    if (!shiftStart || !shiftEnd) return { label: "⚪ No shift set", color: "#eee" };
+    if (!shiftStart || !shiftEnd)
+      return { label: "⚪ No shift set", color: "#eee" };
     const start = new Date(shiftStart);
     const end = new Date(shiftEnd);
     if (now < start) {
@@ -178,17 +218,46 @@ export default function VehiclesManager() {
           {loading && <p className="mb-2">⏳ Updating vehicle list...</p>}
 
           <div className="flex flex-wrap gap-2 mb-4">
-            <Input name="id" value={form.id} onChange={handleChange} placeholder="Vehicle ID" className="w-36" />
-            <select name="type" value={form.type} onChange={handleChange} className="border rounded-md p-2">
+            <Input
+              name="id"
+              value={form.id}
+              onChange={handleChange}
+              placeholder="Vehicle ID"
+              className="w-36"
+            />
+            <select
+              name="type"
+              value={form.type}
+              onChange={handleChange}
+              className="border rounded-md p-2"
+            >
               <option value="van_only">Van Only</option>
               <option value="van_tow">Van Tow</option>
               <option value="small_ramp">Small Ramp</option>
               <option value="hiab_grabber">HIAB Grabber</option>
               <option value="lorry_recovery">Lorry Recovery</option>
             </select>
-            <Input name="postcode" value={form.postcode} onChange={handleChange} placeholder="Start Postcode" className="w-36" />
-            <Input type="datetime-local" name="shiftStart" value={form.shiftStart} onChange={handleChange} className="w-56" />
-            <Input type="datetime-local" name="shiftEnd" value={form.shiftEnd} onChange={handleChange} className="w-56" />
+            <Input
+              name="postcode"
+              value={form.postcode}
+              onChange={handleChange}
+              placeholder="Start Postcode"
+              className="w-36"
+            />
+            <Input
+              type="datetime-local"
+              name="shiftStart"
+              value={form.shiftStart}
+              onChange={handleChange}
+              className="w-56"
+            />
+            <Input
+              type="datetime-local"
+              name="shiftEnd"
+              value={form.shiftEnd}
+              onChange={handleChange}
+              className="w-56"
+            />
             <Button onClick={addVehicle}>➕ Add</Button>
           </div>
 
@@ -209,12 +278,18 @@ export default function VehiclesManager() {
                 const status = getShiftStatus(v.shiftStart, v.shiftEnd);
                 const editing = editingId === v.id;
                 return (
-                  <tr key={v.id} className={`${status.active ? "pulse" : ""}`} style={{ backgroundColor: status.color }}>
+                  <tr
+                    key={v.id}
+                    className={status.active ? "pulse" : ""}
+                    style={{ backgroundColor: status.color }}
+                  >
                     <td>
                       {editing ? (
                         <Input
                           value={editValues.id || ""}
-                          onChange={(e) => handleEditChange(v.id, "id", e.target.value)}
+                          onChange={(e) =>
+                            handleEditChange(v.id, "id", e.target.value)
+                          }
                           onKeyDown={(e) => handleEditKey(e, v.id)}
                         />
                       ) : (
@@ -225,7 +300,9 @@ export default function VehiclesManager() {
                       {editing ? (
                         <select
                           value={editValues.type || v.type}
-                          onChange={(e) => handleEditChange(v.id, "type", e.target.value)}
+                          onChange={(e) =>
+                            handleEditChange(v.id, "type", e.target.value)
+                          }
                           onKeyDown={(e) => handleEditKey(e, v.id)}
                         >
                           <option value="van_only">Van Only</option>
@@ -242,7 +319,9 @@ export default function VehiclesManager() {
                       {editing ? (
                         <Input
                           value={editValues.postcode || ""}
-                          onChange={(e) => handleEditChange(v.id, "postcode", e.target.value)}
+                          onChange={(e) =>
+                            handleEditChange(v.id, "postcode", e.target.value)
+                          }
                           onKeyDown={(e) => handleEditKey(e, v.id)}
                         />
                       ) : (
@@ -254,7 +333,9 @@ export default function VehiclesManager() {
                         <Input
                           type="datetime-local"
                           value={editValues.shiftStart || ""}
-                          onChange={(e) => handleEditChange(v.id, "shiftStart", e.target.value)}
+                          onChange={(e) =>
+                            handleEditChange(v.id, "shiftStart", e.target.value)
+                          }
                           onKeyDown={(e) => handleEditKey(e, v.id)}
                         />
                       ) : (
@@ -266,7 +347,9 @@ export default function VehiclesManager() {
                         <Input
                           type="datetime-local"
                           value={editValues.shiftEnd || ""}
-                          onChange={(e) => handleEditChange(v.id, "shiftEnd", e.target.value)}
+                          onChange={(e) =>
+                            handleEditChange(v.id, "shiftEnd", e.target.value)
+                          }
                           onKeyDown={(e) => handleEditKey(e, v.id)}
                         />
                       ) : (
@@ -281,10 +364,16 @@ export default function VehiclesManager() {
                         </Button>
                       ) : (
                         <>
-                          <Button variant="secondary" onClick={() => startEditing(v.id)}>
+                          <Button
+                            variant="secondary"
+                            onClick={() => startEditing(v.id)}
+                          >
                             ✏️ Edit
                           </Button>{" "}
-                          <Button variant="destructive" onClick={() => deleteVehicle(v.id)}>
+                          <Button
+                            variant="destructive"
+                            onClick={() => deleteVehicle(v.id)}
+                          >
                             🗑️ Delete
                           </Button>
                         </>
